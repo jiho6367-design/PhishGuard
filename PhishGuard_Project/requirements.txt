@@ -1,0 +1,11 @@
+streamlit
+flask
+torch
+transformers
+openai
+pandas
+altair
+requests
+stripe
+reportlab
+gunicorn

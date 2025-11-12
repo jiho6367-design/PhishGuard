@@ -1,0 +1,35 @@
+services:
+  api:
+    build: .
+    command: gunicorn -w 2 -b 0.0.0.0:8080 api_service:app
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      PHISH_THRESHOLD: ${PHISH_THRESHOLD:-0.30}
+
+  billing:
+    build: .
+    command: python billing_service.py
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./data:/app/data
+    environment:
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+
+  dashboard:
+    build: .
+    command: streamlit run dashboard.py --server.port=8501 --server.address=0.0.0.0
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+    environment:
+      PHISH_API_URL: http://api:8080
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    depends_on:
+      - api
