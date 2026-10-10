@@ -1,5 +1,17 @@
 # DeepLearnProJec
 
+## 포트폴리오 개요
+
+- **형태**: 개인 프로젝트. 이메일의 피싱 위험을 분석하고 결과를 확인하는 PhishGuard 실험 시스템입니다.
+- **주요 기능**: Gmail 메일 수집, 규칙 점수와 분류 모델을 결합한 분석, Flask API, Streamlit 대시보드, SQLite 분석 이력.
+- **본인 역할**: AI와 기능·수정 방향을 논의하고, 코드의 실행 결과와 동작을 확인하며 오류·개선 사항을 전달했습니다.
+- **기술 구성**: Python, Flask, Streamlit, PyTorch, Transformers, SQLite 및 Gmail API.
+- **검증 범위**: 기존 문서의 소규모 분석 기록은 일반적인 탐지 성능이나 상용 운영 안정성을 입증하지 않습니다. 동일 평가셋·정답 라벨·실행 조건을 갖춘 비교 검증이 필요합니다.
+- **실행 조건**: Gmail 연동과 외부 모델 호출에는 별도 자격 증명·설정이 필요합니다. 이 문서 정리에서는 메일 수집이나 유료 API 호출을 실행하지 않았습니다.
+- **역할 범위**: 개인 프로젝트 수행과 모델을 처음부터 독립적으로 설계·학습했다는 주장은 구분합니다.
+
+---
+
 딥러닝 기반 악성코드(피싱) 메일 탐지 및 대응 시스템을 구현하는 프로젝트입니다. Streamlit/Flask 대시보드, 모델 서빙, 메일 가져오기/분석 파이프라인을 통합해 운영 자동화를 목표로 합니다.
 
 ## 최종 결과물 소개
@@ -7,7 +19,7 @@
 - **핵심 기능**: `ingestion_workflow.py`가 읽지 않은 메일을 자동 수집하고, SPF/DKIM/DMARC·링크 평판 룰 점수와 HF 분류기, LLM 정책 프롬프트를 앙상블한 `optimized_pipeline.py`로 위험도를 산출합니다.
 - **API 제공**: `api_service.py`가 `/api/analyze`, `/api/analyze_selected`, `/api/list_emails`, `/api/history`, `/metrics/summary` 등 REST 엔드포인트로 단건/배치 분석, Gmail 목록 조회, 분석 이력·KPI 조회를 제공합니다.
 - **대시보드**: `dashboard.py`에서 API 토큰 기반으로 업로드/선택 메일 분석, Gmail 목록 필터링·재분석, KPI 카드와 추세 차트, 분석 아카이브 검색·리뷰를 UI로 처리합니다.
-- **운영 데이터**: 분석 결과와 피드백을 SQLite(`data/phishguard.db`, `data/feedback.db`)에 캐시·저장하고, `eval.py`와 `tools/eval_db.py`로 임계값 스윕 및 회귀 테스트를 수행하는 구조로 납품되었습니다.
+- **운영 데이터**: 분석 결과와 피드백을 SQLite(`data/phishguard.db`, `data/feedback.db`)에 캐시·저장하고, `eval.py`와 `tools/eval_db.py`로 임계값 스윕 및 회귀 테스트를 수행하는 구조로 구성되어 있습니다.
 
 ## 프로젝트 개요 및 목표
 - Gmail 기반 이메일에 대해 **규칙 기반 점수 + AI 분석**을 결합해 피싱을 탐지하는 실무 지향 보안 파이프라인입니다.
@@ -18,19 +30,12 @@
 - **규칙 기반 점수**: `untrusted_link_action` 룰(가중치 0.35)을 추가해 비신뢰 도메인 링크 + 행동 유도 키워드(login, verify, claim, review 등)가 동시에 존재하면 점수를 크게 부여합니다. 허용 도메인(allowlist)은 제외합니다.
 - **목적**: 낮은 모델 확률도 규칙 점수로 끌어올려 미탐을 줄이고, FP는 관리 가능한 범위로 유지합니다.
 
-## FN(오탐, False Positive, 정상인데 피싱으로 잘못 판단단오 개선 결과 (최근 재분석)
-- **Before**(Threshold 0.20, 규칙 미적용): FN 6건 → 피싱이 정상으로 분류되는 사례 다수.
-- **After**(룰 적용·재분석): 소규모 검증셋에서 `TP/FP/FN/TN = 2/1/1/0`, FN이 6 → 1로 감소, FP는 제한적. 목표한 “빠른 안정화(A안)” 기준 충족.
+## 평가 기록과 해석 범위
 
-## 현재 상태 체크리스트
-- `PHISH_THRESHOLD` 고정 적용 및 FN 패턴 분석 완료.
-- `untrusted_link_action` 규칙 기반 보완 로직 구현 및 적용.
-- 재분석으로 FN 감소 효과 확인, FP는 관리 가능 수준.
-- **최소 수정(minimal change)** 전략을 유지한 채 운영 가능한 안정 상태 확보.
-
-## 핵심 메시지
-- “완벽한 모델”보다 **놓치지 않는 탐지**가 우선이며, 임계값 조정과 단일 룰 추가만으로도 실용적 개선을 달성했습니다.
-- 향후에도 FP/FN 로그 기반으로 규칙·임계값을 점진 조정해 안정성을 유지합니다.
+- FN(False Negative)은 피싱을 정상으로 놓치는 **미탐**, FP(False Positive)는 정상 메일을 피싱으로 판단하는 **오탐**입니다.
+- 기존 문서에는 수정 전 FN 6건과 수정 후 TP/FP/FN/TN = 2/1/1/0이라는 소규모 기록이 있습니다.
+- 두 기록의 평가셋 규모·구성과 동일 조건 여부가 문서만으로 확인되지 않아, 이를 탐지 성능 향상률 또는 운영 안정성의 근거로 사용하지 않습니다.
+- `optimized_pipeline.py`의 `PHISH_THRESHOLD` 기본값은 0.20이며 환경 변수로 변경할 수 있습니다. 평가에서는 실제 실행값과 표본을 함께 기록해야 합니다.
 
 ## 프롬프트 설계 요약
 - `phishing_analysis.py`(15-35): 메타데이터·본문 미리보기를 입력받아 JSON `{ "is_phishing": bool, "risk_score": 0-100, "reasons": [], "summary": "" }`만 반환하도록 강제하는 단일 메일 분석 프롬프트.
@@ -70,13 +75,13 @@
 - 샘플 수집: Gmail API로 최근/의심 메일을 CSV(`text` 또는 `subject`/`body`, `label`)로 덤프합니다. 내부 피싱 훈련 메일·스팸함·정상 업무 메일을 균형 있게 포함시킵니다.
 - 라벨링 기준: `label`은 `phishing`/`normal`(또는 1/0). 멀웨어 첨부, 브랜드 스푸핑, 계정탈취/결제 요청은 `phishing`; 뉴스레터·시스템 알림 등 정상 서비스 발신은 `normal`.
 - 오프라인 평가: `python eval.py samples.csv --sweep` 로 precision/recall/F1과 임계값 스윕을 출력합니다. 네트워크 없이 HuggingFace 캐시 + 룰 기반 점수만 사용합니다(피드백 LLM 호출 없음).
-- 임계값 결정: `PHISH_THRESHOLD`(기본 0.30)을 조정합니다. 보수적 운영(오탐 최소) 시 0.5~0.6, 공격 탐지 우선(미탐 최소) 시 0.25~0.35를 권장합니다. 결정 후 동일 샘플셋으로 재측정하여 변화폭을 기록합니다.
+- 임계값 결정: `PHISH_THRESHOLD`(`optimized_pipeline.py` 기본 0.20)을 조정합니다. 보수적 운영(오탐 최소) 시 0.5~0.6, 공격 탐지 우선(미탐 최소) 시 0.25~0.35를 권장합니다. 결정 후 동일 샘플셋으로 재측정하여 변화폭을 기록합니다.
 - 회귀 테스트: 동일 CSV를 저장소에 보관하고 CI에서 `eval.py`를 돌려 precision/recall/F1이 감소하면 경고하도록 설정합니다.
 - DB 기반 평가: `python tools/eval_db.py --db data/phishguard.db --threshold 0.25 --sweep` 로 SQLite에 저장된 예측 결과를 바로 평가합니다. base_prob+rule_score가 있으면 weight 스윕을, gt_label이 없으면 정밀도/재현율 계산을 생략하고 안내합니다. 사람이 라벨링하려면 `python tools/label_review.py --db data/phishguard.db --export --out label_candidates.csv` 로 샘플을 추출해 라벨링 후 `--import_csv` 로 반영하세요.
 
 ## .env 배치 경로와 사용법
 - **위치**: 리포지토리 루트(`/workspace/DeepLearnProJec/.env`)에 `.env` 파일을 두면 됩니다. (이미 `.gitignore`에 추가되어 있으므로 커밋되지 않습니다.)
-- **샘플 파일**: `.env.example`에 실제로 사용 가능한 샘플 값이 포함되어 있으니, `cp .env.example .env` 후 필요 시 값을 교체해 사용하세요.
+- **샘플 파일**: `.env.example`에 설정용 예시가 포함되어 있으니, `cp .env.example .env` 후 필요 시 값을 교체해 사용하세요.
 - **예시 내용**:
   ```env
   GOOGLE_CLIENT_ID=your_google_oauth_client_id
