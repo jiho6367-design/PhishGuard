@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="메일의 의심 신호와 근거를 로컬에서 확인하는 PhishGuard">
+  <title>PhishGuard · 메일 위험 검토</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">본문으로 이동</a>
+  <svg class="svg-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M12 3 20 6v6c0 4-3.5 7-8 9-4.5-2-8-5-8-9V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></symbol>
+      <symbol id="icon-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+      <symbol id="icon-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/></symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></symbol>
+      <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></symbol>
+      <symbol id="icon-alert" viewBox="0 0 24 24"><path d="M10.3 4.5a2 2 0 0 1 3.4 0l8 14a2 2 0 0 1-1.7 3H4a2 2 0 0 1-1.7-3zM12 9v5m0 3v.1"/></symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+      <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></symbol>
+    </defs>
+  </svg>
+
+  <div class="app-layout">
+    <aside class="sidebar" aria-label="주 탐색">
+      <a class="brand" href="#overview" aria-label="PhishGuard 개요">
+        <span class="brand-mark"><svg class="icon"><use href="#icon-shield"/></svg></span>
+        <span><strong>PhishGuard<span class="brand-dot">.</span></strong><small>메일 위험 검토</small></span>
+      </a>
+      <div class="sidebar-label">WORKSPACE</div>
+      <nav class="main-nav">
+        <a href="#overview" data-nav="overview" aria-current="page"><svg class="icon"><use href="#icon-grid"/></svg><span>개요</span></a>
+        <a href="#analyze" data-nav="analyze"><svg class="icon"><use href="#icon-mail"/></svg><span>메일 분석</span></a>
+        <a href="#history" data-nav="history"><svg class="icon"><use href="#icon-clock"/></svg><span>분석 이력</span></a>
+        <a href="#settings" data-nav="settings"><svg class="icon"><use href="#icon-settings"/></svg><span>설정</span></a>
+      </nav>
+      <div class="sidebar-note">
+        <span class="status-dot" id="connection-dot"></span>
+        <strong id="connection-label">서버 확인 중</strong>
+        <p id="backend-label">분석 환경을 확인하고 있습니다.</p>
+      </div>
+      <div class="sidebar-footer">LOCAL EMAIL REVIEW<span>근거를 확인하고, 직접 판단하세요.</span></div>
+    </aside>
+
+    <main class="main-content" id="main-content" tabindex="-1">
+      <header class="page-header">
+        <div><div class="eyebrow">PHISHGUARD WORKSPACE</div><h1 id="page-title">개요</h1></div>
+        <div class="header-state"><span class="status-dot" id="header-dot"></span><span id="header-status">연결 확인 중</span></div>
+      </header>
+      <div id="app-alert" class="notice notice-error" role="alert" hidden></div>
+      <noscript><div class="notice notice-error">이 화면에는 JavaScript가 필요합니다. 브라우저 설정에서 JavaScript를 허용해 주세요.</div></noscript>
+
+      <section id="view-overview" class="view" data-view="overview" aria-labelledby="overview-title">
+        <div class="hero-card">
+          <div class="hero-copy">
+            <span class="pill pill-teal"><span class="status-dot"></span>근거 중심 메일 검토</span>
+            <h2 id="overview-title">메일을 열기 전에,<br>의심 신호부터 확인하세요.</h2>
+            <p>링크, 첨부 파일명, 인증 결과를 함께 살펴봅니다.<br class="desktop-break"> 판정 이유와 권장 조치를 한눈에 확인하세요.</p>
+            <a href="#analyze" class="button button-primary">메일 분석 시작<svg class="icon"><use href="#icon-arrow"/></svg></a>
+            <span class="hero-footnote">위험지표는 검토를 돕는 참고값이며 안전을 보증하지 않습니다.</span>
+          </div>
+          <div class="hero-art" aria-hidden="true">
+            <div class="art-orbit"></div><div class="art-mail"><div class="art-mail-header"><span></span><i></i><i></i></div><div class="art-line long"></div><div class="art-line"></div><div class="art-line short"></div><div class="art-check"><svg class="icon"><use href="#icon-check"/></svg><span>CHECK THE SIGNALS</span></div></div>
+            <div class="art-shield"><svg class="icon"><use href="#icon-shield"/></svg></div>
+          </div>
+        </div>
+
+        <div class="section-heading"><div><h2>현재 분석 현황</h2><p>저장된 이력에서 집계한 실제 수치입니다.</p></div><button class="button button-subtle button-icon" id="overview-refresh" type="button"><svg class="icon"><use href="#icon-refresh"/></svg><span>새로고침</span></button></div>
+        <div class="metric-grid">
+          <article class="metric-card"><span class="metric-icon"><svg class="icon"><use href="#icon-mail"/></svg></span><span class="metric-label">전체 분석</span><strong id="metric-total">—</strong><small>저장된 메일</small></article>
+          <article class="metric-card"><span class="metric-icon metric-icon-amber"><svg class="icon"><use href="#icon-alert"/></svg></span><span class="metric-label">검토 필요</span><strong id="metric-phishing">—</strong><small>임계값 이상 판정</small></article>
+          <article class="metric-card"><span class="metric-icon"><svg class="icon"><use href="#icon-grid"/></svg></span><span class="metric-label">오늘 분석</span><strong id="metric-today">—</strong><small>서버 날짜 기준</small></article>
+          <article class="metric-card"><span class="metric-icon"><svg class="icon"><use href="#icon-clock"/></svg></span><span class="metric-label">평균 분석 시간</span><strong id="metric-latency">—</strong><small>저장된 처리 시간 · ms</small></article>
+        </div>
+        <div class="overview-grid">
+          <article class="panel"><div class="panel-heading"><h2>최근 분석</h2><a class="text-link" href="#history">전체 보기 <span aria-hidden="true">↗</span></a></div><div id="recent-history" class="recent-list"><div class="empty-state compact"><span class="loading-dot"></span><p>이력을 불러오고 있습니다.</p></div></div></article>
+          <article class="panel"><div class="panel-heading"><h2>날짜별 분석</h2><span class="muted small">전체 / 검토 필요</span></div><div id="trend-list" class="trend-list"><p class="empty-caption">집계 데이터 확인 중</p></div><div class="review-summary" id="review-summary">수동 검토 기록을 확인하고 있습니다.</div></article>
+        </div>
+        <div class="quiet-note"><svg class="icon"><use href="#icon-shield"/></svg><p>낮은 위험으로 분류되어도 발신자와 요청 내용을 확인하세요. 비밀번호·결제 정보를 요청하는 메일은 공식 경로에서 다시 확인하는 것이 좋습니다.</p></div>
+      </section>
+
+      <section id="view-analyze" class="view" data-view="analyze" aria-labelledby="analyze-title" hidden>
+        <div class="section-intro"><h2 id="analyze-title">의심되는 메일을 살펴보세요.</h2><p>메일 내용은 문자로만 표시합니다. 링크나 첨부 파일을 실행하지 않습니다.</p></div>
+        <div class="analysis-layout">
+          <article class="panel input-panel">
+            <div class="panel-heading"><h3>메일 입력</h3><span class="pill pill-muted">직접 분석</span></div>
+            <div class="sample-area"><span class="field-caption">합성 샘플로 확인</span><div class="sample-buttons"><button type="button" data-sample="safe" class="sample-button">일반 안내</button><button type="button" data-sample="phishing" class="sample-button">의심 신호</button><button type="button" data-sample="malformed" class="sample-button">잘못된 URL</button></div><small>실제 메일이 아닌 예약 도메인 기반 예시입니다.</small></div>
+            <form id="analyze-form">
+              <div class="field"><label for="email-title">메일 제목 <span class="optional">선택</span></label><input id="email-title" name="title" type="text" maxlength="300" placeholder="예: 계정 확인 요청" autocomplete="off"></div>
+              <div class="field"><label for="email-sender">발신자 <span class="optional">선택</span></label><input id="email-sender" name="sender" type="text" maxlength="500" placeholder="보낸 사람 이름 또는 메일 주소" autocomplete="off"></div>
+              <div class="field"><div class="label-row"><label for="email-body">메일 본문</label><span class="muted small" id="body-count">0자</span></div><textarea id="email-body" name="body" rows="9" maxlength="100000" placeholder="확인할 메일 본문을 붙여 넣으세요." aria-describedby="body-help"></textarea><small id="body-help">본문이나 제목 중 하나가 필요합니다. 본문은 최대 100,000자입니다.</small></div>
+              <div class="field"><label for="email-attachments">첨부 파일명 <span class="optional">선택</span></label><input id="email-attachments" name="attachments" type="text" maxlength="2000" placeholder="예: 안내.pdf, update.exe" aria-describedby="attachments-help"><small id="attachments-help">쉼표로 구분해 입력하세요. 파일 내용은 읽거나 업로드하지 않습니다.</small></div>
+              <details class="advanced-options"><summary>메일 인증 결과 <span class="muted">알고 있는 경우만 입력</span></summary><div class="auth-grid"><div class="field"><label for="auth-spf">SPF</label><select id="auth-spf"><option value="unknown">알 수 없음</option><option value="pass">통과</option><option value="fail">실패</option></select></div><div class="field"><label for="auth-dkim">DKIM</label><select id="auth-dkim"><option value="unknown">알 수 없음</option><option value="pass">통과</option><option value="fail">실패</option></select></div><div class="field"><label for="auth-dmarc">DMARC</label><select id="auth-dmarc"><option value="unknown">알 수 없음</option><option value="pass">통과</option><option value="fail">실패</option></select></div></div><p class="muted small">결과를 모르면 ‘알 수 없음’을 유지하세요. 확인되지 않은 인증은 실패로 간주하지 않습니다.</p></details>
+              <div id="analyze-error" class="notice notice-error" role="alert" hidden></div>
+              <div id="analyze-status" class="form-status" role="status" aria-live="polite"></div>
+              <div class="form-actions"><button id="analyze-submit" class="button button-primary" type="submit"><svg class="icon"><use href="#icon-shield"/></svg><span>메일 분석하기</span></button><button id="analyze-cancel" class="button button-outline" type="button" hidden>응답 대기 취소</button></div>
+              <p class="privacy-note" id="analysis-privacy">분석 결과가 로컬 이력에 저장됩니다. 본문 보관 여부는 설정에서 바꿀 수 있습니다.</p>
+            </form>
+          </article>
+          <article class="panel result-panel" id="result-panel" aria-labelledby="result-title">
+            <div class="panel-heading"><h3 id="result-title">분석 결과</h3><span id="result-cache" class="pill pill-muted" hidden>캐시 재사용</span></div>
+            <div id="result-empty" class="empty-state result-empty"><span class="empty-icon"><svg class="icon"><use href="#icon-shield"/></svg></span><h4>판정의 이유를 함께 확인하세요.</h4><p>메일을 입력하고 분석하면<br>위험지표와 의심 신호를 보여드립니다.</p><div class="result-checklist"><span>링크와 도메인</span><span>요청 표현과 첨부 파일명</span><span>메일 인증 결과</span></div></div>
+            <div id="result-content" hidden>
+              <div id="result-verdict" class="result-verdict"><span id="result-label" class="verdict-label"></span><h4 id="result-subject"></h4><p id="result-caption"></p></div>
+              <div class="risk-block"><div class="risk-heading"><span id="result-score-kind">규칙 위험지표</span><strong><span id="result-score">0</span><small> / 100</small></strong></div><progress id="result-progress" max="100" value="0" aria-label="위험지표"></progress><div class="risk-footnote"><span id="result-threshold"></span><span>실제 피싱 확률이 아닙니다.</span></div></div>
+              <div class="result-section"><h4>확인된 근거</h4><ul id="result-signals" class="signal-list"></ul></div>
+              <div class="result-section"><h4>권장 조치</h4><p id="result-feedback" class="feedback-copy"></p></div>
+              <div id="result-warnings" class="notice notice-info" hidden></div>
+              <div class="result-meta"><span id="result-timing"></span><span id="result-backend"></span></div>
+              <a href="#history" class="text-link result-history-link">분석 이력에서 다시 보기 <span aria-hidden="true">↗</span></a>
+            </div>
+          </article>
+        </div>
+        <details class="panel gmail-panel" id="gmail-section"><summary><span><svg class="icon"><use href="#icon-mail"/></svg><strong>Gmail에서 선택해 분석</strong></span><span class="muted small">기존 연결이 있는 경우</span></summary><div class="gmail-content"><p class="muted">목록을 불러올 때만 기존 Gmail 연결을 사용합니다. 새 연결이나 권한 요청은 이 화면에서 진행하지 않습니다.</p><div class="gmail-toolbar"><button id="gmail-load" type="button" class="button button-outline"><svg class="icon"><use href="#icon-refresh"/></svg>목록 불러오기</button><span id="gmail-limit" class="muted small">목록 제한: 설정 확인 중</span></div><div id="gmail-error" class="notice notice-error" role="alert" hidden></div><div id="gmail-status" class="form-status" role="status" aria-live="polite"></div><div id="gmail-list" class="gmail-list"></div><div class="form-actions"><button id="gmail-analyze" type="button" class="button button-primary" disabled>선택한 메일 분석</button><button id="gmail-cancel" type="button" class="button button-outline" hidden>응답 대기 취소</button></div><div id="gmail-results" class="gmail-results" aria-live="polite"></div></div></details>
+      </section>
+
+      <section id="view-history" class="view" data-view="history" aria-labelledby="history-title" hidden>
+        <div class="section-heading"><div><h2 id="history-title">저장된 분석을 다시 확인하세요.</h2><p>판정과 근거, 직접 검토한 기록을 함께 보관합니다.</p></div><button id="history-refresh" type="button" class="button button-outline"><svg class="icon"><use href="#icon-refresh"/></svg>새로고침</button></div>
+        <article class="panel history-panel"><div class="history-toolbar"><div class="field search-field"><label for="history-search">이력 검색</label><div class="search-input"><svg class="icon"><use href="#icon-search"/></svg><input type="search" id="history-search" maxlength="200" placeholder="제목, 발신자, 보관된 본문 검색"></div></div><div class="field"><label for="history-filter">판정</label><select id="history-filter"><option value="all">전체</option><option value="phishing">검토 필요</option><option value="normal">낮은 위험</option></select></div></div><div id="history-error" class="notice notice-error" role="alert" hidden></div><div class="history-count" id="history-count" role="status" aria-live="polite">이력을 확인하고 있습니다.</div><div id="history-list" class="history-list"></div></article>
+        <p class="muted small section-footnote">직접 검토한 라벨은 사용자 판단 기록입니다. 검증된 정확도나 메일의 안전을 뜻하지 않습니다.</p>
+      </section>
+
+      <section id="view-settings" class="view" data-view="settings" aria-labelledby="settings-title" hidden>
+        <div class="section-intro"><h2 id="settings-title">분석 기준과 보관 방식을 조정하세요.</h2><p>변경은 저장 버튼을 눌러야 적용됩니다. 취소하면 저장된 값으로 돌아갑니다.</p></div>
+        <div class="settings-layout">
+          <article class="panel"><div class="panel-heading"><h3>분석 및 보관</h3><span id="settings-dirty" class="pill pill-amber" hidden>저장되지 않은 변경</span></div><form id="settings-form"><fieldset id="settings-fields" disabled><div class="field"><label for="setting-threshold">검토 필요 임계값</label><div class="number-field"><input id="setting-threshold" name="threshold" type="number" min="0.05" max="0.95" step="0.01" required aria-describedby="threshold-help"><span>0.05–0.95</span></div><small id="threshold-help">위험지표가 이 값 이상이면 ‘검토 필요’로 표시합니다. 낮추면 더 많은 메일을 검토 대상으로 분류합니다.</small></div><div class="field"><label for="setting-max-results">Gmail 목록 최대 개수</label><div class="number-field"><input id="setting-max-results" name="max_results" type="number" min="1" max="50" step="1" required><span>1–50개</span></div><small>사용자가 목록을 불러올 때 적용됩니다.</small></div><div class="toggle-field"><div><label for="setting-retain-body">메일 본문 보관</label><p>켜면 본문도 로컬 이력에 저장합니다. 꺼도 제목·발신자·판정·근거는 저장됩니다.</p></div><input id="setting-retain-body" name="retain_body" type="checkbox" role="switch"></div></fieldset><div id="settings-warning" class="notice notice-info" hidden></div><div id="settings-error" class="notice notice-error" role="alert" hidden></div><div id="settings-status" class="form-status" role="status" aria-live="polite"></div><div class="form-actions"><button id="settings-save" type="submit" class="button button-primary" disabled>설정 저장</button><button id="settings-cancel" type="button" class="button button-outline" disabled>변경 취소</button><button id="settings-reload" type="button" class="button button-subtle">저장된 값 다시 읽기</button></div><div class="settings-version" id="settings-version">저장된 설정을 확인하고 있습니다.</div></form></article>
+          <div class="settings-side"><article class="panel"><div class="panel-heading"><h3>서버 접근 토큰</h3><span class="pill pill-muted">선택</span></div><p class="muted small">서버에서 API 토큰을 설정한 경우에만 입력하세요. 이 브라우저 탭의 세션에만 보관하며 설정 파일에는 저장하지 않습니다.</p><div class="field"><label for="api-token">API 토큰</label><input id="api-token" type="password" maxlength="1000" autocomplete="off" placeholder="서버가 요구하는 경우만 입력"></div><div class="token-actions"><button id="token-apply" class="button button-outline" type="button">세션에 적용</button><button id="token-clear" class="button button-subtle" type="button">지우기</button></div><div id="token-status" class="form-status" role="status" aria-live="polite"></div></article><article class="panel mode-panel"><span class="metric-icon"><svg class="icon"><use href="#icon-shield"/></svg></span><h3>분석 방식</h3><p id="mode-description">서버의 분석 방식을 확인하고 있습니다.</p><p class="muted small">규칙 점수는 운영 정확도나 피싱 확률을 보장하지 않습니다. 중요한 요청은 발신자의 공식 연락처로 확인하세요.</p><span class="pill pill-teal" id="cost-label">호출 정책 확인 중</span></article></div>
+        </div>
+      </section>
+      <footer class="page-footer"><span>PhishGuard</span><span>의심 신호를 찾고, 판단 근거를 남깁니다.</span></footer>
+    </main>
+  </div>
+
+  <dialog id="detail-dialog" aria-labelledby="detail-title">
+    <div class="dialog-heading"><div><span class="eyebrow" id="detail-eyebrow">분석 상세</span><h2 id="detail-title"></h2></div><button id="detail-close" type="button" class="button button-subtle icon-only" aria-label="상세 닫기"><svg class="icon"><use href="#icon-close"/></svg></button></div>
+    <div class="detail-meta" id="detail-meta"></div><div id="detail-analysis" class="detail-analysis"><span id="detail-label" class="pill"></span><strong id="detail-score"></strong><p id="detail-feedback"></p><ul id="detail-signals" class="signal-list"></ul></div>
+    <div class="detail-body-block"><h3>메일 본문</h3><pre id="detail-body"></pre></div>
+    <div id="detail-review" class="detail-review"><h3>직접 검토 기록</h3><p id="detail-review-label" class="muted small"></p><div class="form-actions"><button type="button" id="review-normal" class="button button-outline">낮은 위험으로 기록</button><button type="button" id="review-phishing" class="button button-outline button-warning">검토 필요로 기록</button></div><div id="review-status" class="form-status" role="status" aria-live="polite"></div><div id="review-error" class="notice notice-error" role="alert" hidden></div><small>사용자 판단을 기록합니다. 분석 기준은 자동으로 바뀌지 않습니다.</small></div>
+  </dialog>
+</body>
+</html>

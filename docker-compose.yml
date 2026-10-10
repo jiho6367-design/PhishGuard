@@ -1,24 +1,16 @@
 services:
-  api:
+  phishguard:
     build: .
-    command: gunicorn -w 2 -b 0.0.0.0:8080 api_service:app
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
-      - ./data:/app/data
+      - phishguard-data:/app/data
     environment:
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      PHISH_BACKEND: rules
+      PHISH_DATA_DIR: /app/data
       PHISH_THRESHOLD: ${PHISH_THRESHOLD:-0.20}
+      PHISH_API_TOKEN: ${PHISH_API_TOKEN:-}
+    restart: "no"
 
-  dashboard:
-    build: .
-    command: streamlit run dashboard.py --server.port=8501 --server.address=0.0.0.0
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./data:/app/data
-    environment:
-      PHISH_API_URL: http://api:8080
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-    depends_on:
-      - api
+volumes:
+  phishguard-data:

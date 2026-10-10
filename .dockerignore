@@ -1,0 +1,15 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+__pycache__
+*.pyc
+.pytest_cache
+logs
+data
+test-results
+playwright-report
+_codex_backup.patch
+fn_cases.csv
+label_candidates.csv

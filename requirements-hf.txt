@@ -1,0 +1,5 @@
+-r requirements.txt
+# Optional: explicitly selected, previously cached phishing classifier only.
+# Installing these packages does not validate a model or download its weights.
+torch>=2.5,<3
+transformers>=4.45,<6

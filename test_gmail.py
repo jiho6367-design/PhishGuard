@@ -1,58 +1,50 @@
+"""Safe configuration check; real Gmail access requires the explicit --connect flag."""
+from __future__ import annotations
+
+import argparse
 import os
-import traceback
+from pathlib import Path
 
 from dotenv import load_dotenv
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
 
 
-def main():
-    print("=== test_gmail.py 시작 ===")
+REQUIRED = ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REFRESH_TOKEN")
 
-    load_dotenv()
-    print("환경변수 로딩 완료")
 
-    client_id = os.getenv("GOOGLE_CLIENT_ID")
-    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
-    refresh_token = os.getenv("GOOGLE_REFRESH_TOKEN")
-
-    print("CLIENT_ID:", "있음" if client_id else "없음")
-    print("CLIENT_SECRET:", "있음" if client_secret else "없음")
-    print("REFRESH_TOKEN:", "있음" if refresh_token else "없음")
-
-    if not all([client_id, client_secret, refresh_token]):
-        print("필수 환경변수가 비어 있습니다. .env 설정을 다시 확인하세요.")
-        return
-
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Gmail 설정 존재 여부 또는 명시적 읽기 전용 연결을 점검합니다.")
+    parser.add_argument("--connect", action="store_true", help="기존 OAuth 자격 증명으로 실제 Gmail 목록을 조회합니다.")
+    args = parser.parse_args(argv)
+    load_dotenv(Path(__file__).resolve().parent / ".env", override=False)
+    present = {name: bool(os.getenv(name, "").strip()) for name in REQUIRED}
+    for name, exists in present.items():
+        print(f"{name}: {'있음' if exists else '없음'}")
+    if not args.connect:
+        print("외부 연결은 실행하지 않았습니다. 실제 조회는 --connect를 명시해야 합니다.")
+        return 0
+    if not all(present.values()):
+        print("기존 Gmail 자격 증명이 부족합니다. 연결을 실행하지 않았습니다.")
+        return 1
     try:
+        from google.oauth2.credentials import Credentials
+        from mail_service import build
+
         creds = Credentials(
             None,
-            refresh_token=refresh_token,
+            refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],
             token_uri="https://oauth2.googleapis.com/token",
-            client_id=client_id,
-            client_secret=client_secret,
+            client_id=os.environ["GOOGLE_CLIENT_ID"],
+            client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
             scopes=["https://www.googleapis.com/auth/gmail.readonly"],
         )
-        print("Credentials 객체 생성 완료")
-
-        service = build("gmail", "v1", credentials=creds)
-        print("Gmail service 생성 완료")
-
+        service = build("gmail", "v1", credentials=creds, cache_discovery=False)
         result = service.users().messages().list(userId="me", maxResults=5).execute()
-        messages = result.get("messages", [])
-
-        print(f"불러온 메일 수: {len(messages)}")
-        for msg in messages:
-            print("- message id:", msg.get("id"))
-
-        profile = service.users().getProfile(userId="me").execute()
-        print(profile["emailAddress"])
-        print("=== test_gmail.py 종료 ===")
-
-    except Exception:
-        print("예외 발생:")
-        traceback.print_exc()
+        print(f"읽기 전용 조회 성공: {len(result.get('messages', []))}건. 메일 ID·본문·계정 주소는 출력하지 않습니다.")
+    except Exception as exc:
+        print(f"Gmail 조회를 완료하지 못했습니다 ({type(exc).__name__}). 의존성·자격 증명·연결 상태를 확인하세요.")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

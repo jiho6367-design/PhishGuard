@@ -3,3 +3,19 @@
 __pycache__/
 data/*.db
 logs/
+*.pyc
+.pytest_cache/
+playwright-report/
+test-results/
+data/settings.json
+data/settings.json.*
+data/*.db-wal
+data/*.db-shm
+.env.*
+!.env.example
+
+# Existing private/generated files are preserved locally only.
+/_codex_backup.patch
+/data/results.csv
+/fn_cases.csv
+/label_candidates.csv

@@ -1,94 +1,137 @@
-# PhishGuard — 피싱 메일 탐지·분석 시스템
+# PhishGuard — 피싱 메일 검토를 돕는 로컬 도구
 
-## 포트폴리오 개요
+메일 제목·본문·인증 결과·첨부 파일명을 규칙으로 분석하고, 근거와 분석 이력을 한국어 화면에서 확인합니다. 기본 모드는 노트북 안에서 실행되며 API 키, 모델 다운로드, 유료 외부 API 호출이 필요하지 않습니다.
 
-- **형태**: 개인 프로젝트. 이메일의 피싱 위험을 분석하고 결과를 확인하는 PhishGuard 실험 시스템입니다.
-- **주요 기능**: Gmail 메일 수집, 규칙 점수와 분류 모델을 결합한 분석, Flask API, Streamlit 대시보드, SQLite 분석 이력.
+## 포트폴리오에서 설명할 범위
+
+- **형태**: 개인 프로젝트. 피싱 위험 신호를 점검하는 실험 도구입니다.
 - **본인 역할**: AI와 기능·수정 방향을 논의하고, 코드의 실행 결과와 동작을 확인하며 오류·개선 사항을 전달했습니다.
-- **기술 구성**: Python, Flask, Streamlit, PyTorch, Transformers, SQLite 및 Gmail API.
-- **검증 범위**: 기존 문서의 소규모 분석 기록은 일반적인 탐지 성능이나 상용 운영 안정성을 입증하지 않습니다. 동일 평가셋·정답 라벨·실행 조건을 갖춘 비교 검증이 필요합니다.
-- **실행 조건**: Gmail 연동과 외부 모델 호출에는 별도 자격 증명·설정이 필요합니다. 이 문서 정리에서는 메일 수집이나 유료 API 호출을 실행하지 않았습니다.
-- **역할 범위**: 개인 프로젝트 수행과 모델을 처음부터 독립적으로 설계·학습했다는 주장은 구분합니다.
+- **현재 기본 구성**: Python, Flask, 같은 서버의 HTML/CSS/JavaScript 화면, 규칙 분석, SQLite 이력, JSON 설정.
+- **선택 구성**: 기존 자격 증명을 사용하는 Gmail 읽기 전용 조회, Streamlit 보조 화면, 명시적인 피싱 라벨을 가진 로컬 캐시 분류기.
+- **해석 범위**: 위험 지표는 보정된 피싱 확률이나 안전 보증이 아닙니다. 모델을 처음부터 독립 설계·학습했거나 상용 탐지 성능을 입증했다는 주장을 하지 않습니다. 과거 문서의 소규모 TP/FP/FN/TN 기록은 동일 평가셋인지 확인되지 않아 성능 향상률로 사용하지 않습니다.
 
----
+이 프로그램은 메일을 격리·삭제·발송하거나 OS·브라우저·네트워크 접근을 차단하지 않습니다. URL의 문자열 구조를 검사하며 실제 사이트의 현재 평판이나 내용을 조회하지 않습니다.
 
-딥러닝 기반 악성코드(피싱) 메일 탐지 및 대응 시스템을 구현하는 프로젝트입니다. Streamlit/Flask 대시보드, 모델 서빙, 메일 가져오기/분석 파이프라인을 통합해 운영 자동화를 목표로 합니다.
+## Windows에서 실행
 
-## 최종 결과물 소개
-- **제품 형태**: PhishGuard – Gmail 연동형 피싱 메일 탐지·대응 운영 툴킷으로 Flask API, Streamlit 대시보드, 배치 수집 스크립트를 묶은 일체형 스택입니다.
-- **핵심 기능**: `ingestion_workflow.py`가 읽지 않은 메일을 자동 수집하고, SPF/DKIM/DMARC·링크 평판 룰 점수와 HF 분류기, LLM 정책 프롬프트를 앙상블한 `optimized_pipeline.py`로 위험도를 산출합니다.
-- **API 제공**: `api_service.py`가 `/api/analyze`, `/api/analyze_selected`, `/api/list_emails`, `/api/history`, `/metrics/summary` 등 REST 엔드포인트로 단건/배치 분석, Gmail 목록 조회, 분석 이력·KPI 조회를 제공합니다.
-- **대시보드**: `dashboard.py`에서 API 토큰 기반으로 업로드/선택 메일 분석, Gmail 목록 필터링·재분석, KPI 카드와 추세 차트, 분석 아카이브 검색·리뷰를 UI로 처리합니다.
-- **운영 데이터**: 분석 결과와 피드백을 SQLite(`data/phishguard.db`, `data/feedback.db`)에 캐시·저장하고, `eval.py`와 `tools/eval_db.py`로 임계값 스윕 및 회귀 테스트를 수행하는 구조로 구성되어 있습니다.
+Python 3.11 이상을 사용하세요. 이번 개선 검증 환경은 Python 3.13입니다. PowerShell에서 아래 명령을 실행합니다. 제공된 작업 복사본의 위치가 달라졌다면 첫 줄만 바꾸세요.
 
-## 프로젝트 개요 및 목표
-- Gmail 기반 이메일에 대해 **규칙 기반 점수 + AI 분석**을 결합해 피싱을 탐지하는 실무 지향 보안 파이프라인입니다.
-- 모델 아키텍처 변경 없이 **미탐(False Negative,피싱인데 정상 메일로 탐지) 최소화**를 우선 목표로 두고, 현실적인 임계값/룰 조합으로 안정성을 확보합니다.
+```powershell
+Set-Location 'C:\Users\jiho\Documents\Codex\2026-10-11\task\work\PhishGuard'
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe api_service.py
+```
 
-## 탐지 전략 (Threshold & Rule)
-- **임계값 고정**: `PHISH_THRESHOLD = 0.20`을 기본으로 유지해 낮은 확률의 피싱도 규칙 점수로 보완 가능하게 설계했습니다.
-- **규칙 기반 점수**: `untrusted_link_action` 룰(가중치 0.35)을 추가해 비신뢰 도메인 링크 + 행동 유도 키워드(login, verify, claim, review 등)가 동시에 존재하면 점수를 크게 부여합니다. 허용 도메인(allowlist)은 제외합니다.
-- **목적**: 낮은 모델 확률도 규칙 점수로 끌어올려 미탐을 줄이고, FP는 관리 가능한 범위로 유지합니다.
+브라우저에서 **http://127.0.0.1:8080**을 엽니다. 종료는 이 서버를 실행한 터미널에서 `Ctrl+C`입니다. 이미 가상환경을 제공받았다면 생성·설치 단계 없이 마지막 명령으로 실행할 수 있습니다. PowerShell 실행 정책을 변경하거나 가상환경을 활성화할 필요가 없습니다.
 
-## 평가 기록과 해석 범위
+기본 UI와 API는 한 프로세스로 실행됩니다. Streamlit을 동시에 띄울 필요가 없습니다. 다른 폴더에서 절대 경로로 실행해도 프로젝트의 `data` 폴더를 사용합니다. 8080을 다른 작업이 사용하고 있으면 그 작업을 종료하지 말고 충돌을 확인하세요.
 
-- FN(False Negative)은 피싱을 정상으로 놓치는 **미탐**, FP(False Positive)는 정상 메일을 피싱으로 판단하는 **오탐**입니다.
-- 기존 문서에는 수정 전 FN 6건과 수정 후 TP/FP/FN/TN = 2/1/1/0이라는 소규모 기록이 있습니다.
-- 두 기록의 평가셋 규모·구성과 동일 조건 여부가 문서만으로 확인되지 않아, 이를 탐지 성능 향상률 또는 운영 안정성의 근거로 사용하지 않습니다.
-- `optimized_pipeline.py`의 `PHISH_THRESHOLD` 기본값은 0.20이며 환경 변수로 변경할 수 있습니다. 평가에서는 실제 실행값과 표본을 함께 기록해야 합니다.
+## 화면에서 할 수 있는 작업
 
-## 프롬프트 설계 요약
-- `phishing_analysis.py`(15-35): 메타데이터·본문 미리보기를 입력받아 JSON `{ "is_phishing": bool, "risk_score": 0-100, "reasons": [], "summary": "" }`만 반환하도록 강제하는 단일 메일 분석 프롬프트.
-- `optimized_pipeline.py`(96-138): 모델 확률·룰 점수·탐지 신호를 입력해 JSON `{label, confidence, brief_reason}`만 허용하는 최종 판정 LLM 프롬프트.
-- `optimized_pipeline.py`(150-182): Detection Policy 삽입 후 label·confidence를 넘겨 한국어 설명을 생성하는 피드백 프롬프트; 정상/피싱별 문구 제약과 1줄 결론·근거 3개·조치 3개·오탐/미탐 한줄 형식 강제.
-- `api_service.py`(169-195): 대시보드 응답용 간결 피드백 프롬프트; 모델 verdict·confidence를 포함해 한국어로 “차분한 보안 분석가” 톤을 유지.
-- `prompt_version_tracker.py`: 프롬프트 버전/실험 로그를 SQLite(`data/prompt_experiments.db`)에 저장하며 `register_prompt`/`log_run`/`print_report`로 관리.
-- `PHISHING_POLICY` env로 Detection Policy를 주입하며, 기본 문자열은 Gmail 라벨·SPF/DKIM/DMARC·링크/첨부·발신자 불일치·긴급 언어를 고려하도록 안내합니다.
+1. **개요**: 실제 저장된 분석 건수·위험 분류·지연 및 사람이 검토한 기록의 통계를 확인합니다. 이력이 없으면 빈 상태를 표시합니다.
+2. **분석**: 제목·본문·발신자·첨부 파일명과 알려진 인증 결과를 입력합니다. 합성 샘플을 불러오거나 직접 입력할 수 있습니다. 결과에서 위험 지표, 현재 임계값, 탐지 근거, 권장 조치를 확인합니다.
+3. **이력**: 이전 분석을 검색하고 상세 내용을 봅니다. 사람이 입력한 정상/피싱 검토 결과는 모델 판정과 따로 저장합니다.
+4. **설정**: 임계값, Gmail 조회 개수, 본문 보관 여부를 저장합니다. 저장 전 취소하면 이전 값으로 돌아갑니다.
 
-## 교수님 피드백 반영 방향
-- **메일함 신규 메일 수집 자동화**: Gmail 등 주요 웹메일 API를 통해 주기적으로 신규 메일을 가져오는 기능을 구현합니다.
-- **Gmail 신호 활용(라벨/인증 결과)**: Gmail 라벨(SPAM/IMPORTANT 등)과 Authentication-Results의 SPF/DKIM/DMARC pass/fail 신호를 모델 입력·규칙 점수에 포함합니다. (Gmail 내부 스팸/피싱 판정 규칙 자체를 학습·재현하지는 않습니다.)
-- **AI 모델에 명확한 탐지 기준 제시**: 프롬프트와 분류 모델에 서비스 정책(의심 척도, 신고 기준 등)을 명시하여 일관된 탐지 지시를 내립니다.
+분석 중 반복 클릭은 제한됩니다. **취소는 브라우저의 응답 대기를 취소**합니다. 이미 서버에서 시작한 분석이나 이력 저장까지 되돌린다는 의미는 아닙니다. 입력은 유지되며 오류가 나면 메시지를 확인한 뒤 직접 다시 시도할 수 있습니다. 같은 입력·메타데이터·분석 정책은 캐시를 재사용합니다. 설정이나 분석 정책이 달라지면 다시 분석합니다.
 
-## 메일 가져오기 및 처리 과정 (제안된 파이프라인)
-1. **웹메일 API 연동**: Gmail API 등 오픈 API를 사용해 신규 메일을 읽어옵니다.
-2. **데이터 적재**: 가져온 메일 원문/메타데이터를 파서로 정리해 안전한 변수/스토리지에 저장합니다.
-3. **AI 분석 단계**: 정제된 메일 데이터를 악성도 분류 모델과 프롬프트 기반 LLM에 전달하여 탐지 결과를 산출합니다.
-4. **응답/알림**: 악성으로 판단되면 대시보드에 표시하고, 사전 정의된 답변/격리 조치를 실행합니다.
+## 점수와 데이터
 
-## 차별화 및 개발 효율화 아이디어
-- **기존 메일 서비스 신호 활용**: Gmail 분류 결과, SPF/DKIM/DMARC 검증 여부, 링크 평판 등 외부 신호를 피처로 결합합니다.
-- **AI 툴 적극 활용**: 모델 실험, 프롬프트 버전 관리, 배치/스트리밍 분석 자동화를 통해 개발 시간을 단축합니다.
-- **기획 검증**: 탐지 정책과 사용자 응답 플로우를 주기적으로 점검해 기획 적절성을 유지합니다.
+- 기본 `PHISH_BACKEND=rules`입니다. 인증 정보가 없으면 `unknown`으로 취급하며, 실제 실패와 구분합니다.
+- URL 구조, 행동 유도 표현, 첨부 확장자 등의 신호를 합쳐 0~1 위험 지표를 만듭니다. `confidence`는 이전 호출자를 위한 같은 지표의 별칭입니다.
+- 기본 임계값은 0.20입니다. 임계값 이상의 결과는 `phishing`(검토 필요), 아래는 `normal`(낮은 위험)입니다. 낮은 위험도 안전을 보장하지 않습니다.
+- 한국어 표현·영어 단어 경계·중복 링크·깨진 URL 포트를 처리하지만, 규칙의 범위 밖 표현이나 새 수법은 놓칠 수 있습니다. 허용 도메인도 메일 전체의 안전을 증명하지 않습니다.
+- 설정은 `data/settings.json`, 이력은 `data/phishguard.db`입니다. 기존 DB는 호환 열을 유지하며 새 분석용 필드를 추가합니다. 예전 점수를 새 위험 지표와 동일한 탐지 성능으로 비교하지 마세요.
+- 본문 보관 설정은 **이후 분석**에 적용됩니다. 이미 저장된 본문이 자동 삭제되는 기능으로 해석하지 마세요. 제목·발신자·근거 등 다른 필드에도 개인정보가 포함될 수 있습니다.
 
-## 사용자가 직접 처리해야 하는 작업
-- **Gmail API/타 웹메일 자격 증명 발급 및 콘솔 설정**: OAuth 동의 화면, 리프레시 토큰, IMAP/SMTP 권한 등을 직접 구성해야 합니다.
-- **API 키/시크릿 관리**: OpenAI 등 외부 모델 키를 `.env`나 비밀 관리 도구에 안전하게 저장하고 배포 파이프라인에 주입해야 합니다.
-- **보안 및 개인 정보 준수 검토**: 메일 원문 저장/가공 시 법적·정책적 요구사항을 확인하고 동의/마스킹 절차를 마련해야 합니다.
-- **실제 메일 박스 연결 테스트**: 사내/개인 계정으로 엔드투엔드 수집·분석·응답 테스트를 수행해 권한/쿼터 문제를 확인해야 합니다.
+## 선택 설정
 
-## 빠른 실행 가이드
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `OPENAI_API_KEY`를 환경 변수로 설정합니다.
-- `python ingestion_workflow.py`를 실행하면 읽지 않은 메일을 가져와 SPF/DKIM/DMARC, Gmail 라벨 신호와 함께 분류/피드백을 출력합니다. 기본 정책 문구는 `PHISHING_POLICY` 환경 변수로 교체 가능합니다.
+`.env` 없이 실행할 수 있습니다. 필요한 경우에만 프로젝트 루트의 `.env.example`을 `.env`로 복사합니다. `.env`에는 비밀 값을 넣을 수 있으므로 공유하지 마세요. 이미 설정한 환경 변수가 파일 값보다 우선합니다.
 
-## 평가·라벨링·임계값 운영 가이드
-- 샘플 수집: Gmail API로 최근/의심 메일을 CSV(`text` 또는 `subject`/`body`, `label`)로 덤프합니다. 내부 피싱 훈련 메일·스팸함·정상 업무 메일을 균형 있게 포함시킵니다.
-- 라벨링 기준: `label`은 `phishing`/`normal`(또는 1/0). 멀웨어 첨부, 브랜드 스푸핑, 계정탈취/결제 요청은 `phishing`; 뉴스레터·시스템 알림 등 정상 서비스 발신은 `normal`.
-- 오프라인 평가: `python eval.py samples.csv --sweep` 로 precision/recall/F1과 임계값 스윕을 출력합니다. 네트워크 없이 HuggingFace 캐시 + 룰 기반 점수만 사용합니다(피드백 LLM 호출 없음).
-- 임계값 결정: `PHISH_THRESHOLD`(`optimized_pipeline.py` 기본 0.20)을 조정합니다. 보수적 운영(오탐 최소) 시 0.5~0.6, 공격 탐지 우선(미탐 최소) 시 0.25~0.35를 권장합니다. 결정 후 동일 샘플셋으로 재측정하여 변화폭을 기록합니다.
-- 회귀 테스트: 동일 CSV를 저장소에 보관하고 CI에서 `eval.py`를 돌려 precision/recall/F1이 감소하면 경고하도록 설정합니다.
-- DB 기반 평가: `python tools/eval_db.py --db data/phishguard.db --threshold 0.25 --sweep` 로 SQLite에 저장된 예측 결과를 바로 평가합니다. base_prob+rule_score가 있으면 weight 스윕을, gt_label이 없으면 정밀도/재현율 계산을 생략하고 안내합니다. 사람이 라벨링하려면 `python tools/label_review.py --db data/phishguard.db --export --out label_candidates.csv` 로 샘플을 추출해 라벨링 후 `--import_csv` 로 반영하세요.
+| 항목 | 용도 |
+| --- | --- |
+| `PHISH_BACKEND=rules` | 무료 규칙 분석. 기본값 |
+| `PHISH_THRESHOLD=0.20` | 초기 임계값. 저장한 화면 설정이 있으면 그 설정을 사용 |
+| `PHISH_DATA_DIR` | 설정·이력의 저장 폴더. 분리하려면 절대 경로 지정 |
+| `PHISH_API_TOKEN` | 선택 로컬 API 인증 토큰. OpenAI 키와 무관 |
+| `PHISH_API_URL` | Streamlit 보조 화면의 로컬 API 주소 |
 
-## .env 배치 경로와 사용법
-- **위치**: 리포지토리 루트(`/workspace/DeepLearnProJec/.env`)에 `.env` 파일을 두면 됩니다. (이미 `.gitignore`에 추가되어 있으므로 커밋되지 않습니다.)
-- **샘플 파일**: `.env.example`에 설정용 예시가 포함되어 있으니, `cp .env.example .env` 후 필요 시 값을 교체해 사용하세요.
-- **예시 내용**:
-  ```env
-  GOOGLE_CLIENT_ID=your_google_oauth_client_id
-  GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
-  GOOGLE_REFRESH_TOKEN=your_google_refresh_token
-  OPENAI_API_KEY=your_openai_key
-  OPENAI_MODEL=gpt-4o-mini
-  GMAIL_USER=your_gmail_address
-  ```
-- **적용 방법**: 쉘에서 `set -a; source .env; set +a`로 한번 로드하면 이후 터미널 세션에서 환경 변수가 잡힌 상태로 `python ingestion_workflow.py` 등 명령을 실행할 수 있습니다.
+토큰을 설정하면 메일·분석·이력·통계·설정 API에 같은 인증 정책이 적용됩니다. 기본 UI에서 토큰을 입력할 수 있으며 서버의 설정 JSON에 저장하지 않습니다. 최소 상태를 제공하는 `/api/health`는 공개됩니다. API 요청에는 `X-API-Key` 헤더를 사용합니다. 이 로컬 실행 구성은 공개 서비스 운영에 필요한 사용자 계정·TLS·공유 저장소를 대신하지 않습니다.
+
+### Gmail: 기존 자격 증명이 있을 때만
+
+Gmail은 시작 시 자동 연결하지 않습니다. 다음 의존성을 선택 설치하고, 이미 보유한 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`을 설정한 경우에만 명시적으로 조회할 수 있습니다. 이번 작업에서는 새 자격 증명을 발급·입력하지 않았고 실제 Gmail 계정은 호출하지 않았습니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-gmail.txt
+.\.venv\Scripts\python.exe test_gmail.py
+```
+
+위 진단은 설정 **존재 여부만** 출력하며 외부 호출을 하지 않습니다. 아래는 실제 Gmail 읽기 전용 조회를 하는 선택 명령입니다. 실행하면 Google에 네트워크 요청을 보내며, 배치 분석은 화면과 같은 설정·캐시·이력 서비스를 사용합니다.
+
+```powershell
+.\.venv\Scripts\python.exe test_gmail.py --connect
+.\.venv\Scripts\python.exe ingestion_workflow.py --max-results 5
+```
+
+메일 ID·본문·계정 주소·자격 증명은 진단 로그에 출력하지 않습니다. Gmail 라벨이나 인증 결과는 참고 신호이며 별도의 정답 라벨이 아닙니다. API 목록·선택 분석 경로도 유지하지만 실제 계정 권한·쿼터·네트워크 오류는 모의 테스트만으로 보장하지 않습니다.
+
+### 이전 Streamlit 실행 명령
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-streamlit.txt
+.\.venv\Scripts\python.exe -m streamlit run dashboard.py
+```
+
+Flask 서버를 먼저 실행하세요. `demo_v2.py`도 같은 보조 화면으로 연결됩니다. 로컬 주소만 허용하며 폼 제출·조회 버튼을 눌렀을 때만 요청합니다. 자동 재시도, 자동 Gmail 조회, 모델 다운로드, 외부 AI 호출은 하지 않습니다. 기본 브라우저 UI의 전체 설정·취소 기능을 쓰려면 8080 화면을 사용하세요.
+
+### 선택 로컬 분류기
+
+기본 분석에 필요하지 않습니다. 이미 캐시에 있는 검증 대상 모델을 명시적으로 사용하려는 경우에만 `requirements-hf.txt`, `PHISH_BACKEND=hf`, `PHISH_HF_MODEL`을 설정합니다. 자동 모델 다운로드는 하지 않습니다. 라벨은 명시적인 `PHISHING`/`NORMAL`이어야 합니다. SST-2 감정 분류의 `NEGATIVE`를 피싱으로 바꾸지 않습니다. 모델 존재·라벨 검사를 통과해도 운영 탐지 정확도가 입증되는 것은 아닙니다. 이번 작업에서는 모델을 받거나 실제 모델 성능을 평가하지 않았습니다.
+
+## 검증과 개발
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest tests -q
+```
+
+개선 전 재현에서는 scoring/mail 테스트 10개 통과·1개 실패, API 테스트 수집은 무거운 import 의존성으로 실패했습니다. 수정 후 최종 테스트 수치·실제 브라우저 흐름·성능은 함께 제공되는 `audit/verification` 기록을 기준으로 확인하세요. 이 README에 실행하지 않은 검사나 탐지 정확도 수치를 기재하지 않습니다. 합성 입력의 응답 시간은 실제 메일 분류 성능을 나타내지 않습니다.
+
+`eval.py`와 DB 평가 도구는 사람이 만든 정답 라벨 및 실행 조건을 갖춘 데이터에 사용하세요. FP/FN/정밀도/재현율을 계산하려면 예측 결과와 분리된 정답이 있어야 합니다. 사람이 검토하지 않은 예측을 정답으로 기록하지 않습니다.
+
+## Docker (선택, 실행 검증 미실행)
+
+```powershell
+docker compose up --build
+```
+
+단일 Flask 서버를 호스트의 `127.0.0.1:8080`에 매핑하고 설정·SQLite를 `phishguard-data` 볼륨에 보관합니다. 이미지 생성은 패키지 다운로드를 포함합니다. 비밀 파일·가상환경·기존 메일 DB는 빌드 컨텍스트에서 제외합니다. `docker compose down`은 서버를 내리고 볼륨을 유지합니다. `down -v`는 데이터 볼륨도 삭제하므로 복구 명령으로 사용하지 마세요. 이번 개선에서 Docker 빌드·컨테이너 실행은 수행하지 않았습니다.
+
+## Vercel 실패 진단
+
+Vercel의 `deep-learn-pro-jec`는 이름이 바뀐 같은 PhishGuard 소스를 가리킵니다. 로컬 검증 당시 확인한 원격 기준은 `bc23361f00d321f9f6c3945f48dba480d2d50e05`이며, 이메일의 `frontend` Root Directory는 이 저장소에 없습니다. 임의의 빈 `frontend`를 만드는 것으로 서비스를 수리하지 않았습니다.
+
+로컬 개선은 Vercel의 원격 설정이나 실패 배포를 바꾸지 않습니다. 공개 배포를 진행하려면 실제 앱 경로·진입점·공유 영속 저장소·인증·비용을 정하고 사용자 승인을 받아야 합니다. SQLite를 Vercel 함수의 로컬 임시 저장소에 둔다고 영속 이력이 보장되지 않습니다. 진단 근거와 미실행 항목은 제공된 `audit/deployment/DIAGNOSIS.md`에 있습니다. 로컬 개선·검증 단계에서는 푸시·배포·공개 범위·권한 변경을 하지 않았습니다.
+
+## 비용과 복구
+
+제품의 기본 로컬 분석에서 유료 외부 API 호출 비용은 **0원**입니다. ChatGPT 구독·Codex 개발 도구의 사용량은 제품 런타임 비용과 별개입니다. 구독 토큰을 API 키로 쓰거나 비공식 인증을 우회하지 않습니다. 기존 `OPENAI_API_KEY`가 환경에 있어도 이 앱에서 유료 호출을 하지 않으며, 이전 `call_openai_analysis` 함수는 명시적인 비활성화 오류를 냅니다.
+
+바탕 화면 원본 `C:\Users\jiho\OneDrive\바탕 화면\PhishGuard`는 수정하지 않았습니다. OneDrive 접근 지연 때문에 전체 미커밋 상태를 확인하지 못했으므로 원본이 clean이라고 주장하지 않습니다. 로컬 개선·검증은 별도 `work/PhishGuard`에서 했으며, 그 단계에서는 원격으로 보내지 않았습니다.
+
+기준 백업은 작업 폴더의 `audit/baseline/phishguard-bc23361.bundle`입니다. 이 백업을 **새 폴더**로 복원할 수 있습니다.
+
+```powershell
+Set-Location 'C:\Users\jiho\Documents\Codex\2026-10-11\task'
+git clone '.\audit\baseline\phishguard-bc23361.bundle' '.\work\PhishGuard-baseline'
+```
+
+원본 폴더 위에 복원하거나 `git reset --hard`로 사용자 작업을 덮어쓰지 마세요. 설정·메일 이력 백업은 서버를 종료한 뒤 `PHISH_DATA_DIR`(기본 `data`) 폴더를 별도 복사해 보관합니다. 개선 패치·배포용 소스 ZIP·검증 증거의 최종 위치는 함께 제공되는 결과 안내를 확인하세요.
+
+## 강의 기법 적용
+
+AI-Lecture `5198d844460fb461badff1dd764da41fa36192f4`의 자료 목록과 읽기 상태를 먼저 확정했습니다. 10~16강은 빈 자리 파일이며, Node 실행 파일과 JAR의 바이너리 클래스는 포맷·목록·해시만 확인하고 내용을 읽었다고 처리하지 않았습니다. 교육 본문·압축 내부 소스·문서·PDF·이미지 및 의존성의 실제 읽기 방식과 중복 내용 확인 근거는 `audit/lecture-read/read-status.json`/CSV와 담당 기록에 남겼습니다.
+
+07강의 합격 기준·독립 검토·버전별 피드백, 08강의 논리/데이터/반례/현실성 검토와 입력 보존·수동 재시도, 09강의 의존 순서·공통 계약·결정적 로컬 처리를 적용했습니다. 런타임에서는 같은 판단을 매번 유료 AI에 물어보지 않고 규칙·검증·캐시로 처리합니다. 강의의 시연 수치나 외부 설치·방화벽 안내를 이번 프로젝트의 성능 또는 권한 근거로 사용하지 않았습니다.

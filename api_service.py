@@ -1,708 +1,302 @@
+"""One local application: Korean UI, free analysis, settings and history."""
 from __future__ import annotations
 
-import asyncio
-import hashlib
+import hmac
 import logging
 import os
-import sqlite3
 import re
-import textwrap
-import time
-from datetime import datetime, timezone
+import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from urllib.parse import urlsplit
 
-import torch
-import torch.nn.functional as F
-from flask import Flask, jsonify, request, abort
-from openai import OpenAI
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from dotenv import load_dotenv
+from flask import Flask, jsonify, render_template, request
+from werkzeug.exceptions import HTTPException
+
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env", override=False)
+
+from analysis_service import AnalysisService, InputError
+from history_store import get_history_item, init_db, load_history, save_review
 from mail_service import GmailAuthError, get_unread_emails
-from server.gmail_client import (
-    GmailClientError,
-    fetch_message_detail,
-    fetch_recent_messages,
-)
-from optimized_pipeline import analyze_emails
+from server.gmail_client import GmailClientError, fetch_message_detail, fetch_recent_messages
+from settings_store import SettingsConflict, SettingsStore
 
-from prompt_version_tracker import PromptVersionTracker, PromptRun
-from phishing_analysis import PhishingAnalysisStore, analyze_email_content
-from history_store import (
-    init_db,
-    save_analysis_result,
-    load_history,
-    get_existing_gmail_ids,
-    load_history_by_gmail_ids,
-)
-
-load_dotenv(".env")
-os.environ.setdefault("PYTHONUTF8", "1")
-
-MODEL_NAME = os.getenv("HF_CLASSIFIER", "distilbert-base-uncased-finetuned-sst-2-english")
-THRESHOLD = float(os.getenv("PHISH_THRESHOLD", 0.20))
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-# API 토큰이 비어 있으면 OpenAI 키를 fallback 으로 허용해 로컬 실험 시 401을 줄인다.
-PHISH_API_TOKEN = (os.getenv("PHISH_API_TOKEN", "")).strip()
-OPENAI_API_KEY_ENV = (os.getenv("OPENAI_API_KEY", "")).strip()
-API_TOKENS: List[str] = [t for t in (PHISH_API_TOKEN, OPENAI_API_KEY_ENV) if t]
-API_TOKEN = API_TOKENS[0] if API_TOKENS else ""
-FEEDBACK_DB = Path("data/feedback.db")
-LOG_PATH = Path("logs/email_analysis.log")
-SUSPICIOUS_PATTERN = re.compile(r"(zip|exe|docm|xlsm|scr|bat)", re.IGNORECASE)
-
-LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-LOG_PATH.touch(exist_ok=True)
-
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
-model.eval()
-
-tracker = PromptVersionTracker()
-tracker.register_prompt("v1", "Explain risk + 3 steps.")
-
-app = Flask(__name__)
 logger = logging.getLogger(__name__)
-analysis_store = PhishingAnalysisStore()
-# Initialize SQLite persistence
-init_db()
-
-# ingestion_workflow 에서 사용하던 프롬프트 포맷을 동일하게 활용
-DEFAULT_POLICY = """
-- Gmail 분류 결과(SPAM/IMPORTANT)를 참고하되 그대로 신뢰하지 않는다.
-- SPF/DKIM/DMARC가 실패하거나 링크·첨부 파일이 있으면 위험 점수를 높인다.
-- 발신자/도메인 위장, 급박/금전 요구, 로그인/다운로드 링크의 사회공학 패턴을 우선 검토한다.
-- 조직 보안 정책에 맞춰 격리/모니터링/사용자 알림 등 후속 조치를 명시한다.
-"""
+MESSAGE_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 
 
-def _format_signals(email: Dict[str, Any]) -> str:
-    auth = email.get("auth_results", {}) or {}
-    labels = email.get("gmail_labels", []) or []
-    attachments = email.get("attachments", []) or []
-
-    auth_line = (
-        f"SPF={'pass' if auth.get('spf_pass') else 'fail/unknown'}, "
-        f"DKIM={'pass' if auth.get('dkim_pass') else 'fail/unknown'}, "
-        f"DMARC={'pass' if auth.get('dmarc_pass') else 'fail/unknown'}"
-    )
-    attachment_line = ", ".join(att.get("filename", "") for att in attachments) or "none"
-    label_line = ", ".join(labels) if labels else "none"
-
-    return (
-        f"- Gmail labels: {label_line}\n"
-        f"- Auth: {auth_line}\n"
-        f"- Attachments: {attachment_line}"
-    )
+def _json_object():
+    if not request.is_json:
+        raise InputError("Content-Type: application/json으로 보내 주세요.")
+    value = request.get_json(silent=True)
+    if not isinstance(value, dict):
+        raise InputError("요청은 올바른 JSON 객체여야 합니다.")
+    return value
 
 
-def _as_prompt_text(email: Dict[str, Any]) -> str:
-    return (
-        f"Subject: {email.get('subject', '').strip()}\n\n"
-        f"Body:\n{email.get('body', '').strip()}\n\n"
-        f"Signals:\n{_format_signals(email)}"
-    )
+def _integer(value, name, minimum, maximum, *, query=False):
+    if query and isinstance(value, str) and value.isascii() and value.isdecimal():
+        value = int(value)
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise InputError(f"{name}은 {minimum}~{maximum} 사이의 정수여야 합니다.")
+    return value
 
 
-def json_abort(status: int, message: str):
-    response = jsonify({"error": message})
-    response.status_code = status
-    abort(response)
+def _message_id(value):
+    if not isinstance(value, str) or not MESSAGE_ID.fullmatch(value):
+        raise InputError("메일 ID 형식이 올바르지 않습니다.")
+    return value
 
 
-def require_api_token() -> Optional[str]:
-    """Require API token if configured; accept X-API-Key or Authorization: Bearer."""
-    if not API_TOKENS:
-        return None
-
-    header_token = (request.headers.get("X-API-Key") or "").strip()
-    bearer = (request.headers.get("Authorization") or "").strip()
-    if bearer.lower().startswith("bearer "):
-        bearer = bearer[7:].strip()
-
-    token = header_token or bearer
-    if token not in API_TOKENS:
-        expected_masks = [f"****{t[-4:]}" for t in API_TOKENS]
-        got_mask = f"****{token[-4:]}" if token else "<empty>"
-        print(f"[DEBUG] expected one of {expected_masks}, got={got_mask}")
-        json_abort(401, "invalid_token")
-    return token
+def _gmail_error(exc):
+    if isinstance(exc, GmailAuthError):
+        return jsonify(error="gmail_configuration", detail="Gmail 연동 설정이 없습니다. 로컬 분석은 계속 사용할 수 있습니다. 기존 읽기 전용 자격 증명을 준비한 경우에만 연동을 실행해 주세요."), 400
+    return jsonify(error="gmail_fetch_failed", detail="메일을 가져오지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요."), 502
 
 
-def classify_email(text: str):
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
-    with torch.no_grad():
-        logits = model(**inputs).logits
-        probs = F.softmax(logits, dim=-1)
-    idx = int(torch.argmax(probs))
-    confidence = float(probs[0, idx])
-    raw_label = model.config.id2label[idx].upper()
-    label = "phishing" if raw_label.startswith("NEG") else "normal"
-    return label, confidence
+def create_app(data_dir: str | Path | None = None) -> Flask:
+    app = Flask(__name__)
+    app.config.update(MAX_CONTENT_LENGTH=1_048_576, JSON_SORT_KEYS=False)
+    app.json.ensure_ascii = False
+    directory = Path(data_dir or os.getenv("PHISH_DATA_DIR") or BASE_DIR / "data").resolve()
+    history_path = directory / "phishguard.db"
+    settings = SettingsStore(directory / "settings.json")
+    init_db(history_path)
+    service = AnalysisService(history_path, settings)
+    app.extensions.update(analysis_service=service, settings_store=settings, history_path=history_path)
+    api_token = os.getenv("PHISH_API_TOKEN", "")
 
+    @app.before_request
+    def local_request_policy():
+        # Prevent hostile web pages posting to this local service and DNS rebinding.
+        hostname = urlsplit(request.host_url).hostname
+        if hostname not in {"127.0.0.1", "localhost", "::1"}:
+            return jsonify(error="invalid_host", detail="로컬 주소로 접속해 주세요."), 403
+        origin = request.headers.get("Origin")
+        if request.headers.get("Sec-Fetch-Site") == "cross-site" or (origin and origin != request.host_url.rstrip("/")):
+            return jsonify(error="invalid_origin", detail="이 앱 화면에서 다시 요청해 주세요."), 403
+        protected = (request.path.startswith("/api/") and request.path != "/api/health") or request.path.startswith("/metrics/")
+        if protected and api_token:
+            supplied = request.headers.get("X-API-Key", "")
+            authorization = request.headers.get("Authorization", "")
+            if not supplied and authorization.startswith("Bearer "):
+                supplied = authorization[7:]
+            if not hmac.compare_digest(supplied.encode("utf-8"), api_token.encode("utf-8")):
+                return jsonify(error="unauthorized", detail="API 토큰을 확인한 뒤 다시 시도해 주세요."), 401
 
-def generate_email_id(seed: str) -> str:
-    ts = datetime.utcnow().strftime("%Y%m%d%H%M%S")
-    digest = hashlib.sha1(f"{ts}:{seed}".encode("utf-8", errors="ignore")).hexdigest()[:10]
-    return f"api-{ts}-{digest}"
+    @app.after_request
+    def response_headers(response):
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+        if request.path.startswith(("/api/", "/metrics/")):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
+    @app.errorhandler(SettingsConflict)
+    def settings_conflict(exc):
+        return jsonify(error="settings_conflict", detail="다른 화면에서 설정이 바뀌었습니다. 설정을 새로 불러온 뒤 저장해 주세요."), 409
 
-def log_prompt_run(email_id: str, label: str, latency_ms: float) -> None:
-    tracker.log_run(
-        PromptRun(
-            version="v1",
-            email_id=email_id,
-            predicted=label,
-            actual=label,
-            latency_ms=latency_ms,
-        )
-    )
+    @app.errorhandler(ValueError)
+    def invalid_input(exc):
+        return jsonify(error="invalid_input", detail=str(exc)), 400
 
+    @app.errorhandler(OSError)
+    @app.errorhandler(sqlite3.Error)
+    def storage_failure(exc):
+        logger.error("Storage failure: %s", type(exc).__name__)
+        return jsonify(error="storage_unavailable", detail="결과 또는 설정을 저장하지 못했습니다. 저장 위치와 여유 공간을 확인한 뒤 다시 시도해 주세요."), 503
 
-def log_email_analysis(token: str, email_id: str, label: str, confidence: float, reason: str) -> None:
-    entry = f"{datetime.utcnow().isoformat()}	{email_id}	{label}	{confidence:.4f}	{token or 'anonymous'}	{reason}\n"
-    with LOG_PATH.open("a", encoding="utf-8") as log_file:
-        log_file.write(entry)
+    @app.errorhandler(RuntimeError)
+    def backend_failure(exc):
+        logger.error("Backend unavailable: %s", type(exc).__name__)
+        return jsonify(error="analysis_unavailable", detail="분석을 완료하지 못했습니다. 분석 백엔드 설정을 확인한 뒤 다시 시도해 주세요."), 503
 
+    @app.errorhandler(HTTPException)
+    def http_failure(exc):
+        detail = "요청 크기는 1 MiB 이하여야 합니다." if exc.code == 413 else "요청 경로 또는 형식을 확인해 주세요."
+        return jsonify(error="request_error", detail=detail), exc.code
 
-def build_feedback(email_text: str, label: str, score: float, email_id: str) -> tuple[str, float]:
-    prompt = f"""
-    Email Subject + Body:
-    {email_text.strip()}
+    @app.errorhandler(Exception)
+    def unexpected_failure(exc):
+        logger.error("Unexpected application failure: %s", type(exc).__name__)
+        return jsonify(error="internal_error", detail="처리 중 오류가 발생했습니다. 입력을 보관한 채 다시 시도해 주세요."), 500
 
-    Model verdict: {label} ({score:.2%})
+    @app.get("/")
+    def index():
+        return render_template("index.html")
 
-    Explain briefly why the message is risky/benign and list three practical next steps.
-    Avoid fear-mongering, stay factual, and assume the reader is non-technical.
-    모든 설명과 피드백 문장은 한국어로 작성하세요.
-    """
-    started = time.perf_counter()
-    response = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        temperature=0.2,
-        max_tokens=320,
-        messages=[
-            {
-                "role": "system",
-                "content": "You are a calm cybersecurity analyst. 모든 설명과 피드백은 한국어로 작성하세요.",
-            },
-            {"role": "user", "content": textwrap.dedent(prompt).strip()},
-        ],
-    )
-    latency_ms = (time.perf_counter() - started) * 1000
-    log_prompt_run(email_id, label, latency_ms)
-    return response.choices[0].message.content.strip(), latency_ms
+    @app.get("/api/health")
+    def health():
+        return jsonify(status="ok", backend=os.getenv("PHISH_BACKEND", "rules"), external_api_calls=False, api_token_required=bool(api_token))
 
+    @app.get("/api/settings")
+    def get_settings():
+        return jsonify(settings.load())
 
-def feedback_summary() -> Dict[str, Any]:
-    if not FEEDBACK_DB.exists():
-        return {
-            "phishing_today": 0,
-            "false_positives": 0,
-            "avg_feedback_latency_ms": 0,
-            "monthly_trend": [],
-        }
+    @app.put("/api/settings")
+    def update_settings():
+        return jsonify(settings.update(_json_object()))
 
-    with sqlite3.connect(FEEDBACK_DB) as conn:
-        conn.row_factory = sqlite3.Row
-        phishing_today = conn.execute(
-            "SELECT COUNT(*) AS c FROM feedback WHERE substr(created_at,1,10) = DATE('now') AND user_label = 'phishing'"
-        ).fetchone()["c"]
-        false_positives = conn.execute(
-            "SELECT COUNT(*) AS c FROM feedback WHERE model_label = 'phishing' AND user_label = 'normal'"
-        ).fetchone()["c"]
-        trend_rows = conn.execute(
-            """SELECT substr(created_at,1,7) AS month_key, COUNT(*) AS cnt
-               FROM feedback
-               GROUP BY month_key
-               ORDER BY month_key DESC
-               LIMIT 12"""
-        ).fetchall()
+    @app.post("/api/analyze")
+    def analyze():
+        payload = _json_object()
+        return jsonify(service.analyze(payload, force=payload.get("force", False)))
 
-    monthly_trend = [
-        {"month": f"{row['month_key']}-01", "phishing": row["cnt"]} for row in reversed(trend_rows)
-    ]
-    return {
-        "phishing_today": phishing_today,
-        "false_positives": false_positives,
-        "avg_feedback_latency_ms": 0,
-        "monthly_trend": monthly_trend,
-    }
-
-
-def serialize_result(label: str, confidence: float, feedback: str) -> Dict[str, Any]:
-    needs_review = label == "phishing" and confidence >= THRESHOLD
-    now = datetime.now(timezone.utc)
-    return {
-        "label": label,
-        "confidence": round(confidence, 4),
-        "needs_human_review": needs_review,
-        "threshold": THRESHOLD,
-        "gpt_feedback": feedback,
-        "timestamp": now.isoformat(),
-        "date": now.date().isoformat(),
-    }
-
-
-@app.post("/api/analyze")
-def analyze():
-    payload = request.get_json(force=True, silent=True) or {}
-    title = (payload.get("title") or "").strip()
-    body = (payload.get("body") or "").strip()
-    if not (title or body):
-        return jsonify({"error": "title or body is required"}), 400
-
-    token = require_api_token()
-
-    email_meta = {
-        "subject": title,
-        "body": body,
-        "gmail_labels": [],
-        "auth_results": {},
-        "attachments": [],
-    }
-    os.environ.setdefault("PHISHING_POLICY", DEFAULT_POLICY)
-    analysis_list = analyze_emails([_as_prompt_text(email_meta)], metas=[email_meta])
-    analysis = analysis_list[0] if analysis_list else {}
-
-    email_id = generate_email_id(title + body)
-    now = datetime.now(timezone.utc)
-    combined_for_db = {
-        "id": email_id,
-        "subject": title,
-        "body": body,
-        "gmail_labels": [],
-        "auth_results": {},
-        "label": analysis.get("label"),
-        "confidence": round(analysis.get("confidence", 0.0), 4),
-        "feedback": analysis.get("feedback"),
-        "latency_ms": analysis.get("latency_ms"),
-        "timestamp": now.isoformat(),
-        "date": now.date().isoformat(),
-        "gmail_id": email_id,
-    }
-    try:
-        save_analysis_result(combined_for_db)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.exception("Failed to persist analysis result: %s", exc)
-    return (
-        jsonify(
-            {
-                "label": combined_for_db["label"],
-                "confidence": combined_for_db["confidence"],
-                "needs_human_review": (
-                    combined_for_db["label"] == "phishing"
-                    and combined_for_db["confidence"] >= THRESHOLD
-                ),
-                "threshold": THRESHOLD,
-                "gpt_feedback": combined_for_db["feedback"],
-                "timestamp": combined_for_db["timestamp"],
-                "date": combined_for_db["date"],
-            }
-        ),
-        200,
-    )
-
-
-@app.post("/api/analyze_batch")
-def analyze_batch():
-    payload = request.get_json(force=True, silent=True) or {}
-    items = payload.get("items")
-    if not isinstance(items, list) or not items:
-        return jsonify({"error": "items must be a non-empty list"}), 400
-
-    prepared: List[Dict[str, Any]] = []
-    errors: Dict[int, str] = {}
-    for idx, item in enumerate(items):
-        title = (item.get("title") or "").strip()
-        body = (item.get("body") or "").strip()
-        if not (title or body):
-            errors[idx] = "title or body is required"
-            continue
-        text = "\n".join(part for part in (title, body) if part)
-        prepared.append(
-            {
-                "index": idx,
-                "text": text,
-                "email_id": generate_email_id(f"{idx}:{title}"),
-            }
-        )
-
-    if not prepared:
-        return jsonify({"error": "no valid items"}), 400
-
-    token = require_api_token()
-
-    results: List[Optional[Dict[str, Any]]] = [None] * len(items)
-
-    try:
-        analyses = analyze_emails([entry["text"] for entry in prepared])
-    except Exception as exc:
-        logger.error("Batch analysis failed: %s", exc)
-        analyses = []
-
-    if analyses:
-        for entry, analysis in zip(prepared, analyses):
-            needs_review = analysis.get("label") == "phishing" and analysis.get("confidence", 0.0) >= THRESHOLD
-            results[entry["index"]] = {
-                "id": entry["email_id"],
-                "label": analysis.get("label"),
-                "confidence": round(analysis.get("confidence", 0.0), 4),
-                "needs_human_review": needs_review,
-                "threshold": THRESHOLD,
-                "gpt_feedback": analysis.get("feedback"),
-                "latency_ms": analysis.get("latency_ms"),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "date": datetime.now(timezone.utc).date().isoformat(),
-                "rule_score": analysis.get("rule_score"),
-                "base_label": analysis.get("base_label"),
-                "base_confidence": analysis.get("base_confidence"),
-            }
-
-    if not analyses:
-        for entry in prepared:
-            label, confidence = classify_email(entry["text"])
-            feedback, latency_ms = build_feedback(entry["text"], label, confidence, entry["email_id"])
-            results[entry["index"]] = {
-                "id": entry["email_id"],
-                **serialize_result(label, confidence, feedback),
-                "latency_ms": latency_ms,
-            }
-
-    for idx, message in errors.items():
-        results[idx] = {"error": message}
-
-    # Persist batch results (best-effort)
-    for result in results:
-        if not result or "error" in result:
-            continue
-        try:
-            save_analysis_result(result)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.exception("Failed to persist batch analysis result: %s", exc)
-
-    return jsonify({"results": results}), 200
-
-
-@app.post("/api/fetch_and_analyze")
-def fetch_and_analyze():
-    token = require_api_token()
-
-    payload = request.get_json(force=True, silent=True) or {}
-    max_results = payload.get("max_results", 10)
-    try:
-        max_results = int(max_results)
-    except (TypeError, ValueError):
-        return jsonify({"error": "max_results must be an integer"}), 400
-    max_results = max(1, min(max_results, 50))
-
-    try:
-        emails = get_unread_emails(max_results=max_results)
-    except GmailAuthError as exc:
-        logger.warning("Gmail auth error: %s", exc)
-        return jsonify({"error": str(exc)}), 400
-    except RuntimeError as exc:
-        logger.error("Gmail API failure: %s", exc)
-        return jsonify({"error": str(exc)}), 502
-
-    if not emails:
-        return jsonify({"results": []}), 200
-
-    texts = [_as_prompt_text(email) for email in emails]
-    os.environ.setdefault("PHISHING_POLICY", DEFAULT_POLICY)
-    model_outputs = analyze_emails(texts, metas=emails)
-
-    gmail_ids = [meta.get("id") for meta in emails]
-    existing_ids = set()
-    try:
-        existing_ids = get_existing_gmail_ids([gid for gid in gmail_ids if gid])
-    except Exception as exc:  # pragma: no cover
-        logger.exception("Failed to check existing gmail ids: %s", exc)
-
-    cached_results: List[Dict[str, Any]] = []
-    try:
-        cached_results = load_history_by_gmail_ids(list(existing_ids))
-    except Exception as exc:  # pragma: no cover
-        logger.exception("Failed to load cached results: %s", exc)
-        cached_results = []
-
-    to_analyze = [(meta, idx) for idx, meta in enumerate(emails) if meta.get("id") not in existing_ids]
-    analyzed_results: List[Dict[str, Any]] = []
-    if to_analyze:
-        texts_to_analyze = [_as_prompt_text(meta) for meta, _ in to_analyze]
-        try:
-            model_outputs = analyze_emails(texts_to_analyze, metas=[meta for meta, _ in to_analyze])
-        except Exception as exc:  # pragma: no cover - fall back empty
-            logger.exception("Pipeline analysis failed: %s", exc)
-            model_outputs = []
-
-        for (meta, _), analysis in zip(to_analyze, model_outputs):
-            now = datetime.now(timezone.utc)
-            record_id = meta.get("id") or generate_email_id(meta.get("subject", "") or "")
-            combined = {
-                **meta,
-                "id": record_id,
-                "gmail_id": meta.get("id"),
-                "label": analysis.get("label"),
-                "confidence": round(analysis.get("confidence", 0.0), 4),
-                "feedback": analysis.get("feedback"),
-                "latency_ms": analysis.get("latency_ms"),
-                "timestamp": now.isoformat(),
-                "date": now.date().isoformat(),
-                "from_cache": False,
-            }
-            analyzed_results.append(combined)
+    @app.post("/api/analyze_batch")
+    def analyze_batch():
+        payload = _json_object()
+        items = payload.get("items")
+        if not isinstance(items, list) or not 1 <= len(items) <= 50:
+            raise InputError("items는 1~50개의 메일 배열이어야 합니다.")
+        force = payload.get("force", False)
+        if type(force) is not bool:
+            raise InputError("force는 true 또는 false여야 합니다.")
+        results = []
+        for position, item in enumerate(items):
             try:
-                save_analysis_result(combined)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                logger.exception("Failed to persist analysis result: %s", exc)
+                result = service.analyze(item, force=force)
+            except InputError as exc:
+                result = {"error": "invalid_input", "detail": str(exc)}
+            results.append({**result, "index": position})
+        return jsonify(results=results)
 
-    results = cached_results + analyzed_results
-    warnings: List[str] = []
-    if cached_results:
-        warnings.append(f"Reused {len(cached_results)} cached analyses.")
-    if analyzed_results:
-        warnings.append(f"Analyzed {len(analyzed_results)} new emails.")
+    def analyze_gmail_items(emails, force=False):
+        if not isinstance(emails, list):
+            raise RuntimeError("메일 공급자 응답 형식 오류")
+        results = []
+        for email in emails:
+            if not isinstance(email, dict):
+                results.append({"error": "invalid_message", "detail": "메일 내용 형식이 올바르지 않습니다."})
+                continue
+            gmail_id = email.get("gmail_id", email.get("id"))
+            try:
+                results.append(service.analyze({**email, "gmail_id": gmail_id}, force=force))
+            except InputError as exc:
+                results.append({"id": gmail_id, "error": "invalid_message", "detail": str(exc)})
+        return results
 
-    response_body: Dict[str, Any] = {"results": results}
-    if warnings:
-        response_body["warnings"] = warnings
-    return jsonify(response_body), 200
-
-
-@app.post("/api/analyze_selected")
-def analyze_selected():
-    require_api_token()
-
-    payload = request.get_json(force=True, silent=True) or {}
-    message_ids = payload.get("message_ids") or []
-    if not isinstance(message_ids, list) or not message_ids:
-        return jsonify({"error": "message_ids must be a non-empty list"}), 400
-
-    try:
-        max_results = int(payload.get("max_results", len(message_ids)))
-    except (TypeError, ValueError):
-        max_results = len(message_ids)
-    max_results = max(1, min(max_results, 100))
-
-    selected_ids = message_ids[:max_results]
-    emails: List[Dict[str, Any]] = []
-    warnings: List[str] = []
-    for msg_id in selected_ids:
+    @app.post("/api/fetch_and_analyze")
+    def fetch_and_analyze():
+        payload = _json_object()
+        limit = _integer(payload.get("max_results", settings.load()["max_results"]), "max_results", 1, 50)
+        force = payload.get("force", False)
+        if type(force) is not bool:
+            raise InputError("force는 true 또는 false여야 합니다.")
         try:
-            detail = fetch_message_detail(msg_id)
+            emails = get_unread_emails(max_results=limit)
         except (GmailAuthError, GmailClientError, RuntimeError) as exc:
-            warnings.append(f"Failed to fetch message {msg_id}: {exc}")
-            continue
-        emails.append(
-            {
-                "id": detail.get("id", msg_id),
-                "gmail_id": detail.get("id", msg_id),
-                "subject": detail.get("subject", ""),
-                "body": detail.get("body", ""),
-                "gmail_labels": detail.get("gmail_labels", []),
-                "auth_results": detail.get("auth_results", {}),
-                "attachments": [],
-            }
-        )
+            return _gmail_error(exc)
+        return jsonify(results=analyze_gmail_items(emails, force=force))
 
-    if not emails:
-        return jsonify({"error": "no_messages_analyzed", "warnings": warnings}), 502
-
-    gmail_ids = [e.get("gmail_id") for e in emails]
-    existing_ids = set()
-    try:
-        existing_ids = get_existing_gmail_ids([gid for gid in gmail_ids if gid])
-    except Exception as exc:  # pragma: no cover
-        logger.exception("Failed to check existing gmail ids: %s", exc)
-
-    cached_results: List[Dict[str, Any]] = []
-    try:
-        cached_results = load_history_by_gmail_ids(list(existing_ids))
-    except Exception as exc:  # pragma: no cover
-        logger.exception("Failed to load cached results: %s", exc)
-        cached_results = []
-
-    to_analyze = [email for email in emails if email.get("gmail_id") not in existing_ids]
-
-    analyzed_results: List[Dict[str, Any]] = []
-    if to_analyze:
-        texts = [_as_prompt_text(email) for email in to_analyze]
-        os.environ.setdefault("PHISHING_POLICY", DEFAULT_POLICY)
-        model_outputs = analyze_emails(texts, metas=to_analyze)
-
-        for meta, analysis in zip(to_analyze, model_outputs):
-            now = datetime.now(timezone.utc)
-            combined = {
-                **meta,
-                "label": analysis.get("label"),
-                "confidence": round(analysis.get("confidence", 0.0), 4),
-                "feedback": analysis.get("feedback"),
-                "latency_ms": analysis.get("latency_ms"),
-                "timestamp": now.isoformat(),
-                "date": now.date().isoformat(),
-                "from_cache": False,
-            }
-            analyzed_results.append(combined)
+    @app.post("/api/analyze_selected")
+    def analyze_selected():
+        payload = _json_object()
+        ids = payload.get("message_ids")
+        if not isinstance(ids, list) or not 1 <= len(ids) <= 50:
+            raise InputError("message_ids는 1~50개의 메일 ID 배열이어야 합니다.")
+        for message_id in ids:
+            _message_id(message_id)
+        limit = _integer(payload.get("max_results", len(ids)), "max_results", 1, 50)
+        force = payload.get("force", False)
+        if type(force) is not bool:
+            raise InputError("force는 true 또는 false여야 합니다.")
+        selected = list(dict.fromkeys(ids))[:limit]
+        results = []
+        warnings = []
+        for message_id in selected:
             try:
-                save_analysis_result(combined)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                logger.exception("Failed to persist selected analysis result: %s", exc)
+                detail = fetch_message_detail(message_id)
+            except (GmailAuthError, GmailClientError, RuntimeError) as exc:
+                if isinstance(exc, GmailAuthError):
+                    return _gmail_error(exc)
+                results.append({"id": message_id, "error": "gmail_fetch_failed", "detail": "메일을 가져오지 못했습니다."})
+                warnings.append(f"{message_id}: 가져오기 실패")
+                continue
+            results.extend(analyze_gmail_items([{**detail, "gmail_id": message_id}], force=force))
+        return jsonify(results=results, warnings=warnings)
 
-    results = cached_results + analyzed_results
-    if cached_results:
-        warnings.append(f"Reused {len(cached_results)} cached analyses.")
-    if analyzed_results:
-        warnings.append(f"Analyzed {len(analyzed_results)} new emails.")
+    @app.post("/api/emails/<message_id>/analyze")
+    def analyze_gmail_email(message_id):
+        _message_id(message_id)
+        payload = _json_object()
+        force = payload.get("force", False)
+        if type(force) is not bool:
+            raise InputError("force는 true 또는 false여야 합니다.")
+        try:
+            detail = fetch_message_detail(message_id)
+        except (GmailAuthError, GmailClientError, RuntimeError) as exc:
+            return _gmail_error(exc)
+        result = analyze_gmail_items([{**detail, "gmail_id": message_id}], force=force)[0]
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify(**result, messageId=message_id, isPhishing=result["label"] == "phishing", riskScore=round(result["risk_score"] * 100), summary=result["feedback"])
 
-    response_body: Dict[str, Any] = {"results": results}
-    if warnings:
-        response_body["warnings"] = warnings
-    return jsonify(response_body), 200
+    @app.get("/api/list_emails")
+    @app.get("/api/emails")
+    def list_emails():
+        limit = _integer(request.args.get("max_results", settings.load()["max_results"]), "max_results", 1, 50, query=True)
+        label = request.args.get("label")
+        if label and (len(label) > 100 or not re.fullmatch(r"[A-Za-z0-9_-]+", label)):
+            raise InputError("메일 라벨 형식이 올바르지 않습니다.")
+        try:
+            messages = fetch_recent_messages(limit=limit, label=label)
+        except (GmailAuthError, GmailClientError, RuntimeError) as exc:
+            return _gmail_error(exc)
+        return jsonify(messages=messages)
 
+    @app.get("/api/emails/<message_id>")
+    def get_email_detail(message_id):
+        _message_id(message_id)
+        try:
+            return jsonify(fetch_message_detail(message_id))
+        except (GmailAuthError, GmailClientError, RuntimeError) as exc:
+            return _gmail_error(exc)
 
-@app.post("/api/emails/<message_id>/analyze")
-def analyze_gmail_email(message_id: str):
-    token = require_api_token()
+    @app.get("/api/history")
+    def get_history():
+        limit = _integer(request.args.get("limit", 200), "limit", 1, 1000, query=True)
+        days = request.args.get("days")
+        if days is not None:
+            days = _integer(days, "days", 0, 3650, query=True)
+        return jsonify(results=load_history(limit=limit, days=days, db_path=history_path))
 
-    try:
-        email = fetch_message_detail(message_id)
-    except GmailAuthError as exc:
-        logger.warning("Gmail auth error for %s: %s", message_id, exc)
-        return jsonify({"error": str(exc)}), 400
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    except RuntimeError as exc:
-        logger.error("Failed to fetch Gmail message %s: %s", message_id, exc)
-        return jsonify({"error": "gmail_fetch_failed"}), 502
+    @app.get("/api/history/<record_id>")
+    def get_history_detail(record_id):
+        record = get_history_item(record_id, db_path=history_path)
+        if record is None:
+            return jsonify(error="not_found", detail="분석 이력이 없습니다."), 404
+        return jsonify(record)
 
-    try:
-        analysis = analyze_email_content(
-            subject=email.get("subject") or "",
-            sender=email.get("sender") or "",
-            body=email.get("body") or "",
-            client=client,
-            model=OPENAI_MODEL,
-        )
-    except Exception as exc:  # pragma: no cover - defensive against OpenAI errors
-        logger.error("Analysis failed for %s: %s", message_id, exc)
-        return jsonify({"error": "analysis_failed"}), 502
+    @app.post("/api/history/<record_id>/review")
+    def review_history(record_id):
+        label = _json_object().get("label")
+        if label not in ("normal", "phishing"):
+            raise InputError("검토 라벨은 normal 또는 phishing이어야 합니다.")
+        try:
+            return jsonify(save_review(record_id, label, db_path=history_path))
+        except KeyError:
+            return jsonify(error="not_found", detail="분석 이력이 없습니다."), 404
 
-    response_body = {
-        "messageId": message_id,
-        "isPhishing": bool(analysis.get("is_phishing")),
-        "riskScore": int(analysis.get("risk_score", 0)),
-        "reasons": analysis.get("reasons", []),
-        "summary": analysis.get("summary", ""),
-    }
+    @app.get("/metrics/summary")
+    def metrics_summary():
+        with sqlite3.connect(history_path) as conn:
+            total, phishing, normal, today, avg_latency = conn.execute(
+                "SELECT COUNT(*), SUM(label='phishing'), SUM(label='normal'), SUM(date=?), AVG(latency_ms) FROM email_analysis",
+                (datetime.now(timezone.utc).date().isoformat(),),
+            ).fetchone()
+            reviewed, disagreements = conn.execute("SELECT COUNT(*), SUM(ea.label != hl.gt_label) FROM human_labels hl JOIN email_analysis ea ON ea.id=hl.id").fetchone()
+            cutoff = (datetime.now(timezone.utc).date() - timedelta(days=6)).isoformat()
+            rows = conn.execute("SELECT date, COUNT(*), SUM(label='phishing') FROM email_analysis WHERE date >= ? GROUP BY date ORDER BY date", (cutoff,)).fetchall()
+        return jsonify(total=total, phishing=phishing or 0, normal=normal or 0, today=today or 0, avg_latency_ms=round(avg_latency, 3) if avg_latency is not None else None, reviewed=reviewed, disagreements=disagreements or 0, trend=[dict(date=row[0], total=row[1], phishing=row[2] or 0) for row in rows], timezone="UTC")
 
-    analysis_store.save(response_body)
-    return jsonify(response_body), 200
-
-
-@app.get("/api/list_emails")
-def list_gmail_emails():
-    require_api_token()
-
-    try:
-        max_results = int(request.args.get("max_results", 20))
-    except (TypeError, ValueError):
-        max_results = 20
-    max_results = max(1, min(max_results, 100))
-    label = request.args.get("label") or None
-
-    try:
-        messages = fetch_recent_messages(limit=max_results, label=label)
-    except GmailAuthError as exc:
-        logger.error("Gmail configuration error: %s", exc)
-        return jsonify({"error": "gmail_configuration", "detail": str(exc)}), 400
-    except GmailClientError as exc:
-        logger.error("Gmail API error while listing messages: %s", exc)
-        return jsonify({"error": str(exc)}), getattr(exc, "status_code", 502)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.exception("Unexpected failure listing Gmail messages: %s", exc)
-        return jsonify({"error": "internal_error"}), 500
-
-    results = []
-    for msg in messages:
-        results.append(
-            {
-                "gmail_id": msg.get("id"),
-                "thread_id": msg.get("threadId"),
-                "date": msg.get("internalDate") or msg.get("date"),
-                "from": msg.get("from") or msg.get("sender"),
-                "subject": msg.get("subject", ""),
-                "snippet": msg.get("snippet", ""),
-                "gmail_labels": msg.get("gmail_labels", []),
-            }
-        )
-
-    return jsonify({"results": results}), 200
-
-@app.get("/api/emails")
-def list_emails():
-    try:
-        limit = int(request.args.get("limit", 20))
-    except (TypeError, ValueError):
-        return jsonify({"error": "limit must be an integer"}), 400
-
-    limit = max(1, min(limit, 100))
-
-    try:
-        messages = fetch_recent_messages(limit=limit)
-    except GmailAuthError as exc:
-        logger.error("Gmail configuration error: %s", exc)
-        return jsonify({"error": "gmail_configuration", "detail": str(exc)}), 400
-    except GmailClientError as exc:
-        logger.error("Gmail API error while listing emails: %s", exc)
-        return jsonify({"error": str(exc)}), getattr(exc, "status_code", 502)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.exception("Unexpected failure listing emails: %s", exc)
-        return jsonify({"error": "internal_error"}), 500
-
-    return jsonify(messages), 200
+    return app
 
 
-@app.get("/api/emails/<message_id>")
-def get_email_detail(message_id: str):
-    try:
-        detail = fetch_message_detail(message_id)
-    except GmailAuthError as exc:
-        logger.error("Gmail configuration error: %s", exc)
-        return jsonify({"error": "gmail_configuration", "detail": str(exc)}), 400
-    except GmailClientError as exc:
-        logger.error("Gmail API error while fetching message %s: %s", message_id, exc)
-        return jsonify({"error": str(exc)}), getattr(exc, "status_code", 502)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.exception("Unexpected failure fetching email %s: %s", message_id, exc)
-        return jsonify({"error": "internal_error"}), 500
-
-    return jsonify(detail), 200
-
-
-@app.get("/metrics/summary")
-def metrics_summary():
-    return jsonify(feedback_summary())
-
-
-@app.get("/api/history")
-def get_history():
-    require_api_token()
-
-    try:
-        limit = int(request.args.get("limit", 200))
-    except (TypeError, ValueError):
-        limit = 200
-    days_param = request.args.get("days")
-    try:
-        days = int(days_param) if days_param is not None else None
-    except (TypeError, ValueError):
-        days = None
-
-    results = load_history(limit=limit, days=days)
-    return jsonify({"results": results})
-
+app = create_app()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    app.run(host="127.0.0.1", port=8080, debug=False, threaded=True)
