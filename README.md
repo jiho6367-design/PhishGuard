@@ -1,4 +1,4 @@
-# DeepLearnProJec
+# PhishGuard — 피싱 메일 탐지·분석 시스템
 
 ## 포트폴리오 개요
 
