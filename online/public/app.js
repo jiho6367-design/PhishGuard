@@ -130,16 +130,19 @@
     return { item, payload, threshold: model.threshold };
   }
   function validResult(result, threshold) {
+    // Python hostname.casefold can expand each of the 2,048 input UTF-16 units
+    // into up to three units. Accept the full derived reasons, without slicing
+    // away evidence from a response the rules API legitimately accepted.
     return result && typeof result === "object" && result.score_kind === "rule_risk_index" && result.backend === "rules"
       && result.persistent_storage === false && result.external_api_calls === false
       && Number.isFinite(result.risk_score) && result.risk_score >= 0 && result.risk_score <= 1
       && ["phishing", "normal"].includes(result.label) && result.threshold === threshold
       && result.label === (result.risk_score + 1e-12 >= threshold / 100 ? "phishing" : "normal")
-      && Array.isArray(result.reasons) && result.reasons.length <= 300 && result.reasons.every(text => typeof text === "string" && text.length <= 2400)
-      && Array.isArray(result.warnings) && result.warnings.length <= 300 && result.warnings.every(text => typeof text === "string" && text.length <= 2400)
+      && Array.isArray(result.reasons) && result.reasons.length <= 300 && result.reasons.every(text => typeof text === "string" && text.length <= 6400)
+      && Array.isArray(result.warnings) && result.warnings.length <= 300 && result.warnings.every(text => typeof text === "string" && text.length <= 6400)
       && Array.isArray(result.signals) && result.signals.length <= 300 && result.signals.every(signal => signal && typeof signal.name === "string" && signal.name.length <= 100
-        && Number.isFinite(signal.score) && signal.score >= 0 && signal.score <= 1 && typeof signal.reason === "string" && signal.reason.length <= 2400)
-      && typeof result.feedback === "string" && result.feedback.length <= 10000
+        && Number.isFinite(signal.score) && signal.score >= 0 && signal.score <= 1 && typeof signal.reason === "string" && signal.reason.length <= 6400)
+      && typeof result.feedback === "string" && result.feedback.length <= 20000
       && Number.isFinite(result.request_ms) && result.request_ms >= 0;
   }
   function renderList(element, values, fallback) {

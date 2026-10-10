@@ -44,7 +44,7 @@ def prepare_public_item(item: Any) -> dict[str, Any]:
     if len(all_urls) > MAX_LINKS:
         raise InputError("제목·본문·추가 링크의 중복 제외 URL은 합계 50개 이하여야 합니다.")
     # Match browser maxlength/String.length, including non-BMP characters.
-    # This bounds derived host reasons under the UI's 2,400-unit safety cap.
+    # Host casefold can expand Unicode; derived evidence has a separate UI cap.
     if any(len(url.encode("utf-16-le")) // 2 > MAX_URL_CHARS for url in all_urls):
         raise InputError("제목·본문·추가 링크의 각 URL은 2,048자 이하여야 합니다.")
     # These are never accepted from a caller; no Gmail/ID/HTML/parser path.

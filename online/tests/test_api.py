@@ -156,8 +156,8 @@ def test_many_signal_response_fits_ui_contract(client):
     assert response.status_code == 200 and data["risk_score"] == 1.0
     assert 200 < len(data["signals"]) <= 300
     assert len(data["signals"]) == len(data["reasons"])
-    assert all(len(reason) <= 2400 for reason in data["reasons"])
-    assert len(data["feedback"].encode("utf-16-le")) // 2 <= 10000
+    assert all(len(reason.encode("utf-16-le")) // 2 <= 6400 for reason in data["reasons"])
+    assert len(data["feedback"].encode("utf-16-le")) // 2 <= 20000
     assert "대표 근거 2개" in data["feedback"] and f"전체 {len(data['reasons'])}개" in data["feedback"]
 
 
@@ -168,8 +168,8 @@ def test_unicode_url_browser_length_and_reason_limit(client):
     response = post(client, {"item": {"body": "login " + url}, "threshold": 20})
     data = response.get_json()
     assert response.status_code == 200
-    assert all(len(reason.encode("utf-16-le")) // 2 <= 2400 for reason in data["reasons"])
-    assert len(data["feedback"].encode("utf-16-le")) // 2 <= 10000
+    assert all(len(reason.encode("utf-16-le")) // 2 <= 6400 for reason in data["reasons"])
+    assert len(data["feedback"].encode("utf-16-le")) // 2 <= 20000
     longer_url = prefix + "🦄" * ((2048 - len(prefix) - len(suffix)) // 2 + 1) + suffix
     assert len(longer_url) < 2048
     assert post(client, {"item": {"body": longer_url}, "threshold": 20}).status_code == 400
@@ -190,8 +190,33 @@ def test_maximum_json_with_long_unicode_url_feedback_bounds(client):
     response = post(client, payload)
     data = response.get_json()
     assert response.status_code == 200
-    assert len(data["feedback"].encode("utf-16-le")) // 2 <= 10000
-    assert all(len(reason.encode("utf-16-le")) // 2 <= 2400 for reason in data["reasons"])
+    assert len(data["feedback"].encode("utf-16-le")) // 2 <= 20000
+    assert all(len(reason.encode("utf-16-le")) // 2 <= 6400 for reason in data["reasons"])
+
+
+@pytest.mark.parametrize("character,count", [("\u0130", 1300), ("\ufb03", 2031)])
+def test_casefold_expanding_unicode_hosts_fit_derived_contract(client, character, count):
+    prefix, suffix = "https://", ".top/test"
+    first = prefix + character * count + suffix
+    second = prefix + character * (count - 1) + "a" + suffix
+    assert first != second
+    assert all(len(url.encode("utf-16-le")) // 2 <= 2048 for url in (first, second))
+    if character == "\ufb03":
+        assert len(first.encode("utf-16-le")) // 2 == 2048
+    response = post(client, {"item": {"body": "login " + first + "\n" + second}, "threshold": 20})
+    data = response.get_json()
+    assert response.status_code == 200
+    # The approved scorer casefolds the ligature to ASCII before collecting
+    # host signals; two TLD signals plus login action therefore total 0.95.
+    assert data["risk_score"] == (0.95 if character == "\ufb03" else 1.0)
+    lengths = [len(reason.encode("utf-16-le")) // 2 for reason in data["reasons"]]
+    assert max(lengths) > 2400 and max(lengths) <= 6400
+    assert all(len(signal["reason"].encode("utf-16-le")) // 2 <= 6400 for signal in data["signals"])
+    feedback_length = len(data["feedback"].encode("utf-16-le")) // 2
+    assert feedback_length <= 20000
+    if character == "\ufb03":
+        assert feedback_length > 10000
+    assert "대표 근거 2개" in data["feedback"] and len(data["reasons"]) == len(data["signals"])
 
 
 def test_query_input_rejected_without_reflection(client):
