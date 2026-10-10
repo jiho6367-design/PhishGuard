@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="외부 AI API 없이 의심 신호를 확인하는 PhishGuard 온라인 규칙 분석">
+  <title>PhishGuard · 온라인 메일 검토</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/storage.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">본문으로 이동</a>
+  <div class="app-layout">
+    <aside class="sidebar" aria-label="주 탐색">
+      <a class="brand" href="#analysis"><span class="brand-mark" aria-hidden="true">◇</span><span><strong>PhishGuard<span>.</span></strong><small>ONLINE EMAIL REVIEW</small></span></a>
+      <p class="sidebar-label">WORKSPACE</p>
+      <nav class="main-nav">
+        <a href="#analysis" data-nav="analysis" aria-current="page"><span aria-hidden="true">✉</span>메일 분석</a>
+        <a href="#history" data-nav="history"><span aria-hidden="true">◷</span>분석 이력</a>
+        <a href="#settings" data-nav="settings"><span aria-hidden="true">⚙</span>설정</a>
+        <a href="#about" data-nav="about"><span aria-hidden="true">ⓘ</span>이용 안내</a>
+      </nav>
+      <div class="sidebar-note"><strong>외부 AI API 없는 규칙 분석</strong><p>입력 URL을 방문하거나 첨부 파일을 실행하지 않습니다.</p><span id="storage-badge">저장 상태 확인 중</span></div>
+      <div class="sidebar-footer">확인하고, 직접 판단하세요.<br>위험지수는 확률이나 안전 보장이 아닙니다.</div>
+    </aside>
+    <main class="main-content" id="main-content" tabindex="-1">
+      <header class="page-header"><div><p class="eyebrow">PHISHGUARD ONLINE</p><h1 id="page-title" tabindex="-1">메일 분석</h1></div><span class="pill">실제 규칙 분석 · 서버 저장 없음</span></header>
+      <div id="global-status" class="notice" role="status" aria-live="polite" hidden></div>
+      <div id="storage-error" class="notice notice-error" role="alert" hidden></div>
+      <noscript><p class="notice notice-error">분석과 브라우저 저장 관리를 위해 JavaScript를 켜 주세요.</p></noscript>
+
+      <section data-view="analysis" id="view-analysis" aria-labelledby="analysis-title">
+        <div class="hero"><div><span class="eyebrow">SIGNALS BEFORE ACTION</span><h2 id="analysis-title">열기 전에,<br>의심 신호부터 확인하세요.</h2><p>본문·링크의 형태·첨부 파일명·알려진 인증 결과를 규칙으로 살펴봅니다. 결과와 근거를 함께 확인하세요.</p></div><div class="hero-art" aria-hidden="true"><span>✉</span><b>✓</b><small>CHECK THE SIGNALS</small></div></div>
+        <div class="analysis-layout">
+          <article class="panel">
+            <div class="panel-heading"><h3>메일 입력</h3><span class="muted small">수동 분석</span></div>
+            <div class="samples"><span class="small muted">합성 예제 채우기</span><div class="button-row"><button type="button" class="button button-small button-outline" data-sample="normal">일반 안내</button><button type="button" class="button button-small button-outline" data-sample="suspicious">의심 신호</button><button type="button" class="button button-small button-outline" data-sample="malformed">잘못된 URL</button></div><p class="small muted">예제도 분석 버튼을 누르면 실제 API에서 계산합니다.</p></div>
+            <form id="analysis-form" autocomplete="off">
+              <fieldset id="input-fields">
+                <div class="field"><label for="email-title">제목 <span class="optional">선택</span></label><input id="email-title" maxlength="300" autocomplete="off" placeholder="예: 계정 확인 요청"></div>
+                <div class="field"><label for="email-sender">발신자 <span class="optional">선택</span></label><input id="email-sender" maxlength="500" autocomplete="off" placeholder="표시 이름 또는 이메일 주소"></div>
+                <div class="field"><div class="label-row"><label for="email-body">본문</label><span class="muted small" id="body-count">0 / 16,000자</span></div><textarea id="email-body" rows="8" maxlength="16000" placeholder="확인할 텍스트를 붙여 넣으세요." aria-describedby="body-help"></textarea><small id="body-help">제목 또는 본문이 필요합니다. 본문 최대 16,000자, 제목·본문 합계 URL 최대 50개, 주소마다 최대 2,048자. HTML도 글자로만 표시합니다.</small></div>
+                <div class="field"><label for="email-attachments">첨부 파일명 <span class="optional">선택</span></label><textarea id="email-attachments" rows="2" maxlength="5220" placeholder="한 줄에 파일명 하나씩 입력" aria-describedby="attachment-help"></textarea><small id="attachment-help">최대 20개, 각 260자. 파일을 업로드하거나 열지 않습니다.</small></div>
+                <details class="advanced"><summary>메일 인증 결과 <span class="muted small">알고 있는 경우만</span></summary><div class="auth-grid"><div class="field"><label for="auth-spf">SPF</label><select id="auth-spf"><option value="unknown">알 수 없음</option><option value="pass">통과</option><option value="fail">실패</option></select></div><div class="field"><label for="auth-dkim">DKIM</label><select id="auth-dkim"><option value="unknown">알 수 없음</option><option value="pass">통과</option><option value="fail">실패</option></select></div><div class="field"><label for="auth-dmarc">DMARC</label><select id="auth-dmarc"><option value="unknown">알 수 없음</option><option value="pass">통과</option><option value="fail">실패</option></select></div></div><p class="small muted">확인하지 못한 인증은 실패로 가정하지 않습니다.</p></details>
+                <div class="notice transmission"><strong>분석 전에 전송 범위를 확인하세요.</strong><p>제목·본문·본문의 URL·발신자·첨부 파일명·인증 결과가 이 사이트의 분석 서버로 전송됩니다. 입력 URL을 방문하지 않고 외부 AI API를 호출하지 않습니다. 앱의 서버 DB에는 보관하지 않지만 호스팅 서비스의 요청 로그·진단 정책은 별도로 적용될 수 있습니다.</p><label class="check-row"><input type="checkbox" id="send-consent"><span>전송 범위를 확인했으며 이 내용을 분석 서버로 보내겠습니다.</span></label></div>
+              </fieldset>
+              <div class="form-actions"><button type="submit" id="analyze-button" class="button button-primary">의심 신호 분석</button><button type="button" id="cancel-analysis" class="button button-outline" hidden>분석 취소</button><button type="button" id="clear-input" class="button button-quiet">입력 비우기</button><span class="small muted">판정 임계값 <b id="active-threshold">20</b> / 100</span></div>
+              <p id="analysis-status" class="status-line" role="status" aria-live="polite"></p>
+              <div id="analysis-error" class="notice notice-error" role="alert" hidden><p id="analysis-error-text"></p><button type="button" id="retry-analysis" class="button button-outline button-small">다시 분석</button></div>
+            </form>
+          </article>
+          <article class="panel result-panel" aria-labelledby="result-title">
+            <div class="panel-heading"><h3 id="result-title" tabindex="-1">분석 결과</h3><span class="small muted">RULE RISK INDEX</span></div>
+            <div id="result-empty" class="empty-state"><span aria-hidden="true">◇</span><h4>근거를 함께 확인하세요.</h4><p>분석 후 위험지수와 의심 신호가 표시됩니다.</p></div>
+            <div id="result-content" hidden>
+              <div class="score-card"><span id="result-label" class="pill"></span><div class="score-number"><strong id="result-score">0</strong><span>/ 100</span></div><div class="score-track" aria-hidden="true"><i id="score-bar"></i></div><p>규칙의 의심 신호를 더한 지수입니다.<br>피싱 확률·정확도·안전 인증이 아닙니다.</p></div>
+              <h4 class="list-title">확인된 신호</h4><ul id="result-reasons" class="reason-list"></ul>
+              <h4 class="list-title">확인할 점</h4><ul id="result-warnings" class="reason-list warning-list"></ul>
+              <p id="result-feedback" class="quiet-note"></p><p id="result-meta" class="small muted"></p><p id="result-storage" class="small muted storage-result" role="status"></p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section data-view="history" id="view-history" aria-labelledby="history-title" hidden>
+        <div class="section-intro"><h2 id="history-title">이 브라우저의 분석 요약</h2><p id="history-mode">저장하지 않으면 현재 탭을 닫거나 새로고침할 때 사라집니다.</p></div>
+        <div class="notice"><p>제목·발신자·점수도 민감한 정보일 수 있습니다. 본문·전체 URL·첨부 파일명·원문 근거는 이력에 저장하지 않습니다. 같은 브라우저 프로필의 다른 탭과 사용자는 저장된 요약을 볼 수 있습니다.</p></div>
+        <div class="section-heading"><p><strong id="history-count">0</strong>개 · 최대 50개 / 7일</p><div class="button-row"><button id="refresh-history" type="button" class="button button-outline">이력 새로고침</button><button id="delete-all-history" type="button" class="button button-danger">이력·설정 전체 삭제</button></div></div>
+        <div id="history-list" class="history-list"></div>
+        <p class="small muted retention-note">7일이 지난 요약은 앱을 열거나 이력을 조회·저장할 때 삭제됩니다. 브라우저를 닫아 둔 동안 자동 삭제되지는 않습니다.</p>
+      </section>
+
+      <section data-view="settings" id="view-settings" aria-labelledby="settings-title" hidden>
+        <div class="section-intro"><h2 id="settings-title">이 브라우저의 설정</h2><p>서버의 공유 설정을 바꾸지 않습니다. 적용된 임계값은 다음 분석부터 사용합니다.</p></div>
+        <form id="settings-form" class="panel settings-panel">
+          <div class="field"><div class="label-row"><label for="threshold-input">검토 필요 판정 임계값</label><output id="threshold-output" for="threshold-input">20 / 100</output></div><input id="threshold-input" type="range" min="5" max="95" step="5" value="20"><p class="small muted">위험지수가 임계값 이상이면 ‘검토 필요’로 표시합니다. 낮출수록 작은 신호도 검토 대상으로 표시합니다.</p></div>
+          <div class="storage-option"><label class="check-row"><input id="save-consent" type="checkbox"><span><strong>이 브라우저에 이력 요약과 설정 저장하기</strong></span></label><p>기본은 저장하지 않음입니다. 처음 켜면 앞으로 분석하는 요약부터 저장하며, 이전에 현재 탭에서만 표시한 이력을 복사하지 않습니다. 본문·별도 링크 목록·첨부 파일명·원문 근거는 저장하지 않습니다. 제목·발신자에서는 알려진 주소 형식의 전체 URL을 제외하지만 일반 도메인이나 비정형 정보를 완전히 제거하지 못하며 제목·발신자 자체도 민감할 수 있습니다. 최대 50개, 7일을 유지합니다.</p><p><strong>공용 PC에서는 선택하지 마세요.</strong> 저장은 암호화된 개인 계정 보관함이 아닙니다. 같은 브라우저 프로필의 다른 사용자·확장 프로그램이 접근할 수 있습니다.</p><p>체크를 해제해 적용하면 저장된 이력·설정·동의 표시를 모두 삭제합니다. 삭제 완료 전에는 성공으로 표시하지 않습니다.</p></div>
+          <div class="form-actions"><button id="apply-settings" type="submit" class="button button-primary">설정 적용</button><button id="cancel-settings" type="button" class="button button-outline">변경 취소</button><button id="delete-all-settings" type="button" class="button button-danger">이력·설정 전체 삭제</button></div><p id="settings-status" class="status-line" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section data-view="about" id="view-about" aria-labelledby="about-title" hidden>
+        <div class="section-intro"><h2 id="about-title">분석 범위와 데이터 흐름</h2><p>온라인 규칙 분석 모드입니다. 합성 예제를 재생하는 데모와 다릅니다. 사이트의 로그인 보호가 켜져 있으면 같은 주소의 로그인 쿠키를 전송할 수 있으며 해당 호스팅 서비스의 정책이 적용됩니다.</p></div>
+        <div class="about-grid"><article class="panel"><h3>서버로 보내는 정보</h3><p>분석 버튼을 누르면 입력과 임계값을 이 사이트의 서버에 보냅니다. 요청은 앱 코드에서 캐시하지 않으며 서버 DB·메일 연결·서버 이력·공유 설정 기능을 제공하지 않습니다.</p><p>취소는 화면의 대기와 저장을 중지합니다. 이미 전송된 요청을 서버에서 되돌리거나 로그에서 삭제하는 기능은 아닙니다.</p></article><article class="panel"><h3>텍스트만 검사합니다</h3><p>외부 AI API 호출, URL 방문, 첨부 파일 실행, Gmail 접근을 하지 않습니다. 실제 링크의 접속 결과나 악성 파일 내부를 검증하지 못합니다.</p><p>인증 결과는 사용자가 알고 있는 값을 입력합니다. 낮은 지수도 발신자와 요청을 직접 확인해야 합니다.</p></article><article class="panel"><h3>이 브라우저에만 저장</h3><p>선택한 경우 IndexedDB에 요약과 설정을 저장합니다. 다른 브라우저 프로필과 공유하지 않습니다. 같은 프로필의 탭은 공유합니다. 사이트 주소(출처)가 바뀌면 브라우저 저장소도 분리되며 이력이 자동 이전되지 않습니다.</p><p>저장이 차단되거나 용량이 부족해도 분석은 가능합니다. 삭제 실패 시 기존 데이터가 남아 있을 수 있으므로 브라우저의 사이트 데이터 삭제 기능도 확인하세요.</p></article><article class="panel"><h3>호출 한도와 운영 한계</h3><p>본문 16,000자, 요청 64KiB, URL 50개, 첨부 파일명 20개로 제한됩니다. 과도한 요청은 잠시 기다린 뒤 재시도해 주세요.</p><p>서버의 요청 제한은 인스턴스별 메모리 기준입니다. 서버리스의 재시작·여러 인스턴스에서 전체 사용량을 영구적으로 보장하지 못합니다. 무료 호스팅 한도·로그·접근 보호는 배포 운영 설정에 따릅니다.</p></article></div>
+      </section>
+      <footer class="footer">PhishGuard · 근거를 확인하고, 공식 경로로 다시 확인하세요.</footer>
+    </main>
+  </div>
+  <dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-description"><form method="dialog"><h2 id="delete-title">이력·설정을 모두 삭제할까요?</h2><p id="delete-description">이 브라우저 프로필의 저장된 요약·설정·저장 동의와 현재 탭의 이력을 삭제합니다. 임계값은 20으로, 저장은 꺼짐으로 돌아갑니다. 다른 탭의 이미 표시된 결과는 해당 탭에서 비우거나 닫아 주세요.</p><div class="button-row"><button id="dismiss-delete" class="button button-outline" value="cancel" autofocus>취소</button><button id="confirm-delete" class="button button-danger" value="delete">전체 삭제</button></div></form></dialog>
+</body>
+</html>

@@ -1,0 +1,9 @@
+# Runtime only. No ML models, Gmail, DB client, HTTP client, or paid AI SDK.
+Flask==3.1.3
+Werkzeug==3.1.9
+blinker==1.9.0
+click==8.5.0
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.4
+colorama==0.4.6; platform_system == "Windows"

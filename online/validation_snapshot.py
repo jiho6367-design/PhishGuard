@@ -1,0 +1,87 @@
+"""Approved source validation snapshot; no storage or model imports."""
+from __future__ import annotations
+from typing import Any
+
+class InputError(ValueError):
+    """An input the caller can correct without retrying the same request."""
+
+def _text(value: Any, name: str, limit: int) -> str:
+    if not isinstance(value, str):
+        raise InputError(f"{name}은 문자열이어야 합니다.")
+    if len(value) > limit:
+        raise InputError(f"{name}은 {limit:,}자 이하여야 합니다.")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise InputError(f"{name}에 올바르지 않은 유니코드 문자가 있습니다.") from exc
+    return value.strip()
+
+def prepare_item(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        raise InputError("메일 항목은 JSON 객체여야 합니다.")
+    title = _text(item.get("title", item.get("subject", "")), "제목", 300)
+    body = _text(item.get("body", ""), "본문", 100_000)
+    sender = _text(item.get("sender", item.get("from", "")), "발신자", 500)
+    if not title and not body:
+        raise InputError("제목 또는 본문을 입력해 주세요.")
+    auth = item.get("auth_results", {})
+    if not isinstance(auth, dict):
+        raise InputError("auth_results는 JSON 객체여야 합니다.")
+    if any(key not in {f"{name}_{kind}" for name in ("spf", "dkim", "dmarc") for kind in ("pass", "result")} for key in auth):
+        raise InputError("지원하지 않는 인증 결과 항목입니다.")
+    auth_results = {}
+    for key in ("spf_pass", "dkim_pass", "dmarc_pass"):
+        value = auth.get(key)
+        if value is not None and type(value) is not bool:
+            raise InputError("인증 결과는 true, false 또는 null이어야 합니다.")
+        auth_results[key] = value
+    for name in ("spf", "dkim", "dmarc"):
+        key = f"{name}_result"
+        if key in auth and auth[key] is not None:
+            auth_results[key] = _text(auth[key], "인증 결과 설명", 100)
+    attachments = item.get("attachments", [])
+    if not isinstance(attachments, list) or len(attachments) > 50:
+        raise InputError("첨부 목록은 최대 50개의 배열이어야 합니다.")
+    parsed_attachments = []
+    for attachment in attachments:
+        if isinstance(attachment, str):
+            parsed_attachments.append({"filename": _text(attachment, "첨부 파일명", 260)})
+        elif isinstance(attachment, dict):
+            parsed = {"filename": _text(attachment.get("filename", ""), "첨부 파일명", 260)}
+            for key in ("mimeType", "attachmentId"):
+                if key in attachment and attachment[key] is not None:
+                    parsed[key] = _text(attachment[key], "첨부 정보", 300)
+            if "size" in attachment and attachment["size"] is not None:
+                size = attachment["size"]
+                if type(size) is not int or size < 0:
+                    raise InputError("첨부 크기는 0 이상의 정수여야 합니다.")
+                parsed["size"] = size
+            parsed_attachments.append(parsed)
+        else:
+            raise InputError("첨부 항목은 파일명 또는 JSON 객체여야 합니다.")
+    links = item.get("links", [])
+    if not isinstance(links, list) or len(links) > 200:
+        raise InputError("링크 목록은 최대 200개의 배열이어야 합니다.")
+    parsed_links = sorted(set(_text(link, "링크", 2048) for link in links if link != ""))
+    labels = item.get("gmail_labels", [])
+    if not isinstance(labels, list) or len(labels) > 100:
+        raise InputError("메일 라벨 목록 형식이 올바르지 않습니다.")
+    parsed_labels = sorted(set(_text(label, "메일 라벨", 100) for label in labels))
+    gmail_id = item.get("gmail_id")
+    if gmail_id is not None:
+        gmail_id = _text(gmail_id, "메일 ID", 128)
+        if not gmail_id:
+            gmail_id = None
+    warnings = item.get("parser_warnings", [])
+    if not isinstance(warnings, list):
+        warnings = []
+    body_format = item.get("body_format", "plain")
+    if not isinstance(body_format, str):
+        raise InputError("본문 형식은 문자열이어야 합니다.")
+    return {
+        "subject": title, "body": body, "sender": sender,
+        "auth_results": auth_results, "attachments": parsed_attachments,
+        "links": parsed_links, "gmail_labels": parsed_labels, "gmail_id": gmail_id,
+        "parser_warnings": [_text(warning, "파서 경고", 500) for warning in warnings[:50]],
+        "body_format": body_format if body_format in {"plain", "html", "none", "empty"} else "plain",
+    }
