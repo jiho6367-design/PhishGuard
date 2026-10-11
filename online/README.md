@@ -57,7 +57,7 @@ Unicode 호스트명의 `casefold` 정규화는 일부 문자를 최대 3개로 
 
 ## 승인 후 Vercel 설정
 
-이 문서는 로컬 후보의 실행 방법입니다. GitHub 게시·로그인·프로젝트 생성·운영 설정 변경·배포는 아직 실행하지 않았습니다. 승인한 정확한 변경 목록과 SHA에 대해서만 진행합니다.
+이 문서는 온라인 앱의 실행 및 배포 설정입니다. 2026-10-11 사용자 승인 후 GitHub `main`에 온라인 소스를 게시하고 기존 Vercel 프로젝트의 Root/Override 설정을 적용했습니다. 실제 서비스의 빌드·런타임 검증 결과는 별도 배포 기록으로 확인합니다.
 
 | 설정 | 값 |
 |---|---|
@@ -65,13 +65,15 @@ Unicode 호스트명의 `casefold` 정규화는 일부 문자를 최대 3개로 
 | Root Directory | `online` |
 | Framework Preset | `Flask` (`vercel.json`의 `framework: "flask"`) |
 | Python | `.python-version`의 `3.13` |
-| Build Command | Override ON, 빈 값 |
+| Build Command | Override OFF, `vercel.json`에도 지정하지 않음. Flask 기본 빌더 사용 |
 | Install Command | 이전 Override 해제, Python framework 기본 설치 (`requirements.txt`) |
 | Output Directory | 이전 Override 해제, Flask 기본값. 정적 제안의 `.` 값을 사용하지 않음 |
 | Function | `app.py`의 `app`, `maxDuration: 15` |
 | Static files | `public/**`에서 Vercel CDN 제공 |
 
 `vercel.json`은 빌드·프레임워크·보안 헤더와 함수 설정을 포함합니다. Root Directory는 원격 프로젝트 설정으로 별도로 지정해야 합니다. `.vercelignore` 및 함수 `excludeFiles`로 테스트·로컬 환경을 배포 대상에서 제외합니다. 기존 저장소 루트 앱·다른 프로젝트를 변경할 필요가 없습니다. 실제 Vercel 빌드/미리보기/TLS/헤더 처리는 로그인 뒤 최종 검증이 필요하며 로컬 테스트로 증명하지 않았습니다.
+
+`buildCommand: ""`는 빌드 생략을 뜻하는 안전한 Flask 기본값이 아닙니다. Vercel의 빌더 감지는 빈 Build Command를 정적 프런트엔드로 처리하므로 `app.py` 함수 설정이 매칭되지 않습니다. 실제 `0e4f964` 배포의 해당 실패를 수정하려면 이 속성을 생략하고 대시보드 Build Override도 OFF로 유지합니다.
 
 **정확한 앱 출처:** Vercel에서 `Enable access to System Environment Variables`가 활성일 때 `VERCEL=1`과 `VERCEL_URL`, `VERCEL_BRANCH_URL`, `VERCEL_PROJECT_PRODUCTION_URL`의 정확한 도메인만 허용합니다. 시스템 변수를 노출할 수 없다면 `PHISH_PUBLIC_ORIGINS`에 최종 HTTPS 출처 목록을 쉼표로 명시하고 Vercel 플랫폼 여부도 실제 런타임에서 확인해야 합니다. 추가 custom domain 별칭은 자동 포함되지 않으므로 정확히 추가해야 합니다. wildcard `*.vercel.app`나 요청의 `X-Forwarded-Host`로 허용 목록을 만들지 않습니다. 미설정 도메인은 403으로 실패합니다. Deployment Protection을 해제해서 이 검사를 우회하지 마세요.
 
